@@ -245,7 +245,7 @@ server.listen(PORT, () => {
 
   // Auto-open browser
   const { exec } = require("child_process");
-  if (process.platform === "win32") exec(`start ${wizardUrl}`);
+  if (process.platform === "win32") exec(`start "" "${wizardUrl}"`, { shell: "cmd.exe" });
   else if (process.platform === "darwin") exec(`open ${wizardUrl}`);
   else exec(`xdg-open ${wizardUrl}`);
 });
