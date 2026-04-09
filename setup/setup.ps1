@@ -705,7 +705,7 @@ if (-not $SkipBuild) {
     }
 }
 
-Write-Info "Deploying to $deployTarget: $azFuncApp..."
+Write-Info "Deploying to ${deployTarget}: ${azFuncApp}..."
 Write-Info "(This may take a few minutes)"
 
 if ($isContainerApp) {
