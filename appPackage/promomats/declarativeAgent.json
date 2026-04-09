@@ -1,0 +1,17 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.2/schema.json",
+  "version": "v1.2",
+  "name": "Veeva PromoMats",
+  "description": "Search and retrieve Veeva PromoMats promotional content, claims, brand assets, key messages, and marketing materials.",
+  "instructions": "$[file('instruction-promomats.txt')]",
+  "capabilities": [
+    {
+      "name": "GraphConnectors",
+      "connections": [
+        {
+          "connection_id": "veevaPromoMats"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
+  "manifestVersion": "devPreview",
+  "version": "1.0.0",
+  "id": "${{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "Veeva Vault Enhanced Connectors",
+    "websiteUrl": "https://github.com/your-org/veeva-vault-connector",
+    "privacyUrl": "https://github.com/your-org/veeva-vault-connector/privacy",
+    "termsOfUseUrl": "https://github.com/your-org/veeva-vault-connector/terms"
+  },
+  "name": {
+    "short": "Veeva Vault Connector",
+    "full": "Unified Veeva Vault Copilot Connector with Direct Data API"
+  },
+  "description": {
+    "short": "Connect Veeva Vault (PromoMats, QualityDocs, RIM) to M365 Copilot",
+    "full": "Unified Veeva Vault connector supporting PromoMats, QualityDocs, and RIM applications. Uses the Direct Data API for 15-minute incremental crawl, indexes all document versions, relationships, binder structures, Vault objects, and workflow states."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#4B53BC",
+  "copilotAgents": {
+    "declarativeAgents": [
+      {
+        "id": "veevaPromoMats",
+        "file": "promomats/declarativeAgent.json"
+      },
+      {
+        "id": "veevaQualityDocs",
+        "file": "qualitydocs/declarativeAgent.json"
+      },
+      {
+        "id": "veevaRIM",
+        "file": "rim/declarativeAgent.json"
+      }
+    ]
+  }
+}

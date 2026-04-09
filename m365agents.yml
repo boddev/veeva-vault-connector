@@ -1,0 +1,6 @@
+version: v1.0
+provision:
+  - uses: graph/connector
+    with:
+      name: Veeva Vault Enhanced Connector
+      description: Unified Veeva Vault connector supporting PromoMats, QualityDocs, and RIM with Direct Data API incremental crawl

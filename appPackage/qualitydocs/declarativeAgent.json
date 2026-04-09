@@ -1,0 +1,17 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.2/schema.json",
+  "version": "v1.2",
+  "name": "Veeva QualityDocs",
+  "description": "Search and retrieve Veeva QualityDocs quality content — SOPs, CAPAs, deviations, complaints, audits, and controlled documents.",
+  "instructions": "$[file('instruction-qualitydocs.txt')]",
+  "capabilities": [
+    {
+      "name": "GraphConnectors",
+      "connections": [
+        {
+          "connection_id": "veevaQualityDocs"
+        }
+      ]
+    }
+  ]
+}

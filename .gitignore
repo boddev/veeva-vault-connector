@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js.map
+
+# Test coverage
+coverage/
+
+# Environment and secrets
+.env
+.env.*
+!.env.template
+env/.env.*
+setup/.env
+!setup/.env.template
+local.settings.json
+.funcignore
+
+# Azure Functions
+bin/
+obj/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

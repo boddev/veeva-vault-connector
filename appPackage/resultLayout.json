@@ -1,0 +1,81 @@
+{
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "type": "AdaptiveCard",
+  "version": "1.5",
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "Image",
+              "url": "${iconUrl}",
+              "size": "Small",
+              "altText": "Document icon"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${title}",
+              "weight": "Bolder",
+              "size": "Medium",
+              "wrap": true,
+              "maxLines": 2
+            },
+            {
+              "type": "TextBlock",
+              "text": "${documentType} | ${status} | v${versionLabel}",
+              "spacing": "Small",
+              "isSubtle": true,
+              "wrap": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${description}",
+      "wrap": true,
+      "maxLines": 3,
+      "spacing": "Small"
+    },
+    {
+      "type": "FactSet",
+      "facts": [
+        {
+          "title": "Product",
+          "value": "${product}"
+        },
+        {
+          "title": "Country",
+          "value": "${country}"
+        },
+        {
+          "title": "Owner",
+          "value": "${owner}"
+        },
+        {
+          "title": "Modified",
+          "value": "${modifiedDate}"
+        }
+      ],
+      "spacing": "Small"
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.OpenUrl",
+      "title": "Open in Vault",
+      "url": "${vaultUrl}"
+    }
+  ]
+}
