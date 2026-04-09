@@ -161,6 +161,8 @@ $azPlanSku      = Get-EnvValue $envVars "AZURE_PLAN_SKU" "EP1"
 $graphApiVer    = Get-EnvValue $envVars "GRAPH_API_VERSION" "v1.0"
 $useKeyVault    = (Get-EnvValue $envVars "USE_KEY_VAULT" "true") -eq "true"
 $deployAgents   = (Get-EnvValue $envVars "DEPLOY_M365_AGENTS" "false") -eq "true"
+$deployTarget   = Get-EnvValue $envVars "DEPLOY_TARGET" "azure-functions"
+$isContainerApp = ($deployTarget -eq "container-app")
 
 # Auto-derive resource names (user can override via .env)
 $azResourceGroup   = Get-EnvValue $envVars "AZURE_RESOURCE_GROUP"   "rg-veeva-connector"
@@ -169,6 +171,12 @@ $azAppPlan         = Get-EnvValue $envVars "AZURE_APP_SERVICE_PLAN" "plan-veeva-
 $azFuncApp         = Get-EnvValue $envVars "AZURE_FUNCTION_APP"     "func-veeva-$vaultAppClean"
 $azAppInsights     = Get-EnvValue $envVars "AZURE_APP_INSIGHTS"     "ai-veeva-connector"
 $azKeyVault        = Get-EnvValue $envVars "AZURE_KEY_VAULT"        "kv-veeva-$vaultAppClean"
+
+# Container Apps settings (only used if DEPLOY_TARGET=container-app)
+$azContainerRegistry = Get-EnvValue $envVars "AZURE_CONTAINER_REGISTRY" "crveeva$($vaultAppClean)"
+$azContainerAppEnv   = Get-EnvValue $envVars "AZURE_CONTAINER_APP_ENV"  "cae-veeva-connector"
+$containerCpu        = Get-EnvValue $envVars "CONTAINER_CPU" "1.0"
+$containerMemory     = Get-EnvValue $envVars "CONTAINER_MEMORY" "2.0Gi"
 
 # Veeva credentials
 $vaultDns      = Require-EnvValue $envVars "VEEVA_VAULT_DNS"       "Enter Veeva Vault hostname (e.g., myco.veevavault.com)"
@@ -197,8 +205,15 @@ Write-Host "  ──────────────────────
 Write-Info "Vault Application:   $vaultApp"
 Write-Info "Vault DNS:           $vaultDns"
 Write-Info "Azure Location:      $azLocation"
-Write-Info "Function App:        $azFuncApp"
-Write-Info "Plan SKU:            $azPlanSku"
+Write-Info "Deploy Target:       $deployTarget"
+if ($isContainerApp) {
+    Write-Info "Container Registry:  $azContainerRegistry"
+    Write-Info "Container Env:       $azContainerAppEnv"
+    Write-Info "Container CPU/Mem:   $containerCpu / $containerMemory"
+} else {
+    Write-Info "Function App:        $azFuncApp"
+    Write-Info "Plan SKU:            $azPlanSku"
+}
 Write-Info "Graph API Version:   $graphApiVer"
 Write-Info "Key Vault:           $(if ($useKeyVault) { 'Enabled' } else { 'Disabled' })"
 Write-Info "Entra ID App:        $(if ($entraAutoCreate) { 'Will create automatically' } else { 'Using provided: ' + $azClientId })"
@@ -209,12 +224,15 @@ Write-Host ""
 Write-Step "1/10" "Checking Prerequisites"
 
 $prereqsFailed = $false
-foreach ($tool in @(
+$requiredTools = @(
     @{ Name = "az";   Label = "Azure CLI" },
-    @{ Name = "func"; Label = "Azure Functions Core Tools" },
     @{ Name = "node"; Label = "Node.js" },
     @{ Name = "npm";  Label = "npm" }
-)) {
+)
+if (-not $isContainerApp) {
+    $requiredTools += @{ Name = "func"; Label = "Azure Functions Core Tools" }
+}
+foreach ($tool in $requiredTools) {
     if (Test-Command $tool.Name) {
         $ver = & $tool.Name --version 2>$null | Select-Object -First 1
         Write-Ok "$($tool.Label): $ver"
@@ -304,41 +322,117 @@ $storageKeys = Invoke-AzJson -Arguments @(
 )
 $storageConnStr = $storageKeys.connectionString
 
-# 3c. App Service Plan (Premium)
-Write-Info "Creating App Service Plan: $azAppPlan ($azPlanSku)"
-$existing = Invoke-AzJson -Arguments @("functionapp", "plan", "show", "--name", $azAppPlan, "--resource-group", $azResourceGroup) -AllowFailure
-if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
-    Write-Ok "App Service Plan already exists: $azAppPlan"
-} else {
-    Invoke-AzCmd -Arguments @(
-        "functionapp", "plan", "create",
-        "--name", $azAppPlan,
-        "--resource-group", $azResourceGroup,
-        "--location", $azLocation,
-        "--sku", $azPlanSku,
-        "--is-linux", "true"
-    ) | Out-Null
-    Write-Ok "Created App Service Plan: $azAppPlan ($azPlanSku)"
-}
+# 3c–3d: Compute resources (branched by deploy target)
 
-# 3d. Function App
-Write-Info "Creating Function App: $azFuncApp"
-$existing = Invoke-AzJson -Arguments @("functionapp", "show", "--name", $azFuncApp, "--resource-group", $azResourceGroup) -AllowFailure
-if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
-    Write-Ok "Function App already exists: $azFuncApp"
+if ($isContainerApp) {
+    # ── Container Apps path ──────────────────────────────────────────────────
+
+    # 3c. Azure Container Registry
+    Write-Info "Creating Azure Container Registry: $azContainerRegistry"
+    $existing = Invoke-AzJson -Arguments @("acr", "show", "--name", $azContainerRegistry, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "Container Registry already exists: $azContainerRegistry"
+    } else {
+        Invoke-AzCmd -Arguments @(
+            "acr", "create",
+            "--name", $azContainerRegistry,
+            "--resource-group", $azResourceGroup,
+            "--location", $azLocation,
+            "--sku", "Basic",
+            "--admin-enabled", "true"
+        ) | Out-Null
+        Write-Ok "Created Container Registry: $azContainerRegistry"
+    }
+
+    # 3d. Container Apps Environment
+    Write-Info "Creating Container Apps Environment: $azContainerAppEnv"
+    $existing = Invoke-AzJson -Arguments @("containerapp", "env", "show", "--name", $azContainerAppEnv, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "Container Apps Environment already exists: $azContainerAppEnv"
+    } else {
+        Invoke-AzCmd -Arguments @(
+            "containerapp", "env", "create",
+            "--name", $azContainerAppEnv,
+            "--resource-group", $azResourceGroup,
+            "--location", $azLocation
+        ) | Out-Null
+        Write-Ok "Created Container Apps Environment: $azContainerAppEnv"
+    }
+
+    # 3e. Function App on Container Apps
+    Write-Info "Creating Function App on Container Apps: $azFuncApp"
+    $existing = Invoke-AzJson -Arguments @("functionapp", "show", "--name", $azFuncApp, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "Function App already exists: $azFuncApp"
+    } else {
+        $acrLoginServer = "$azContainerRegistry.azurecr.io"
+        Invoke-AzCmd -Arguments @(
+            "functionapp", "create",
+            "--name", $azFuncApp,
+            "--resource-group", $azResourceGroup,
+            "--storage-account", $azStorageAccount,
+            "--environment", $azContainerAppEnv,
+            "--runtime", "node",
+            "--runtime-version", "20",
+            "--functions-version", "4",
+            "--workload-profile-name", "Consumption",
+            "--cpu", $containerCpu,
+            "--memory", $containerMemory
+        ) | Out-Null
+        Write-Ok "Created Function App on Container Apps: $azFuncApp"
+    }
+
 } else {
-    Invoke-AzCmd -Arguments @(
-        "functionapp", "create",
-        "--name", $azFuncApp,
-        "--resource-group", $azResourceGroup,
-        "--plan", $azAppPlan,
-        "--storage-account", $azStorageAccount,
-        "--runtime", "node",
-        "--runtime-version", "20",
-        "--functions-version", "4",
-        "--os-type", "Linux"
-    ) | Out-Null
-    Write-Ok "Created Function App: $azFuncApp"
+    # ── Azure Functions path ─────────────────────────────────────────────────
+
+    # 3c. App Service Plan
+    Write-Info "Creating App Service Plan: $azAppPlan ($azPlanSku)"
+    $existing = Invoke-AzJson -Arguments @("functionapp", "plan", "show", "--name", $azAppPlan, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "App Service Plan already exists: $azAppPlan"
+    } else {
+        Invoke-AzCmd -Arguments @(
+            "functionapp", "plan", "create",
+            "--name", $azAppPlan,
+            "--resource-group", $azResourceGroup,
+            "--location", $azLocation,
+            "--sku", $azPlanSku,
+            "--is-linux", "true"
+        ) | Out-Null
+        Write-Ok "Created App Service Plan: $azAppPlan ($azPlanSku)"
+    }
+
+    # 3d. Function App
+    Write-Info "Creating Function App: $azFuncApp"
+    $existing = Invoke-AzJson -Arguments @("functionapp", "show", "--name", $azFuncApp, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "Function App already exists: $azFuncApp"
+    } else {
+        Invoke-AzCmd -Arguments @(
+            "functionapp", "create",
+            "--name", $azFuncApp,
+            "--resource-group", $azResourceGroup,
+            "--plan", $azAppPlan,
+            "--storage-account", $azStorageAccount,
+            "--runtime", "node",
+            "--runtime-version", "20",
+            "--functions-version", "4",
+            "--os-type", "Linux"
+        ) | Out-Null
+        Write-Ok "Created Function App: $azFuncApp"
+    }
+
+    # Enable Always On for Standard and Dedicated SKUs (required for timer triggers)
+    if ($azPlanSku -match '^(S[1-3]|B[1-3]|P\d+v\d+)$') {
+        Write-Info "Enabling Always On for $azPlanSku plan..."
+        Invoke-AzCmd -Arguments @(
+            "functionapp", "config", "set",
+            "--name", $azFuncApp,
+            "--resource-group", $azResourceGroup,
+            "--always-on", "true"
+        ) | Out-Null
+        Write-Ok "Always On enabled (required for Dedicated/Standard plans)"
+    }
 }
 
 # 3e. Application Insights (if name provided)
@@ -611,13 +705,58 @@ if (-not $SkipBuild) {
     }
 }
 
-Write-Info "Deploying to Azure Functions: $azFuncApp..."
+Write-Info "Deploying to $deployTarget: $azFuncApp..."
 Write-Info "(This may take a few minutes)"
-$deployOutput = & func azure functionapp publish $azFuncApp 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "Deployment failed:"
-    Write-Host ($deployOutput | Out-String)
-    throw "func azure functionapp publish failed"
+
+if ($isContainerApp) {
+    # Build and deploy container image via ACR
+    $acrLoginServer = "$azContainerRegistry.azurecr.io"
+    $imageName = "$acrLoginServer/${azFuncApp}:latest"
+
+    Write-Info "Building container image via ACR: $imageName"
+    $dockerfilePath = Join-Path $projectRoot "Dockerfile"
+    if (-not (Test-Path $dockerfilePath)) {
+        throw "Dockerfile not found at $dockerfilePath"
+    }
+
+    Invoke-AzCmd -Arguments @(
+        "acr", "build",
+        "--registry", $azContainerRegistry,
+        "--resource-group", $azResourceGroup,
+        "--image", "${azFuncApp}:latest",
+        "--file", "Dockerfile",
+        "."
+    ) | Out-Null
+    Write-Ok "Container image built and pushed to ACR"
+
+    # Configure the function app to use the ACR image
+    Write-Info "Configuring Function App to use container image..."
+    $acrCreds = Invoke-AzJson -Arguments @(
+        "acr", "credential", "show",
+        "--name", $azContainerRegistry,
+        "--resource-group", $azResourceGroup
+    )
+    $acrUsername = $acrCreds.username
+    $acrPassword = $acrCreds.passwords[0].value
+
+    Invoke-AzCmd -Arguments @(
+        "functionapp", "config", "container", "set",
+        "--name", $azFuncApp,
+        "--resource-group", $azResourceGroup,
+        "--image", $imageName,
+        "--registry-server", $acrLoginServer,
+        "--registry-username", $acrUsername,
+        "--registry-password", $acrPassword
+    ) | Out-Null
+    Write-Ok "Function App configured with container image"
+} else {
+    # Deploy via Azure Functions Core Tools
+    $deployOutput = & func azure functionapp publish $azFuncApp 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Deployment failed:"
+        Write-Host ($deployOutput | Out-String)
+        throw "func azure functionapp publish failed"
+    }
 }
 Write-Ok "Deployment successful"
 
@@ -625,27 +764,44 @@ Write-Ok "Deployment successful"
 
 Write-Step "9/10" "Initializing Graph Connection & Starting Crawl"
 
-# Get function keys
-Write-Info "Retrieving function keys..."
+# Get function base URL
+Write-Info "Retrieving function app URL..."
 Start-Sleep -Seconds 10  # Wait for deployment to stabilize
 
+if ($isContainerApp) {
+    # For Container Apps, get the FQDN from the function app properties
+    $funcAppInfo = Invoke-AzJson -Arguments @(
+        "functionapp", "show",
+        "--name", $azFuncApp,
+        "--resource-group", $azResourceGroup
+    )
+    $hostName = $funcAppInfo.defaultHostName
+    if (-not $hostName) {
+        Write-Warn "Could not retrieve Container Apps FQDN. Trying convention-based URL..."
+        $hostName = "$azFuncApp.azurecontainerapps.io"
+    }
+    $baseUrl = "https://$hostName/api"
+    Write-Info "Container App URL: $baseUrl"
+} else {
+    $baseUrl = "https://$azFuncApp.azurewebsites.net/api"
+}
+
+# Get function keys
+Write-Info "Retrieving function keys..."
 $funcKeys = Invoke-AzJson -Arguments @(
     "functionapp", "keys", "list",
     "--name", $azFuncApp,
     "--resource-group", $azResourceGroup
-)
+) -AllowFailure
 $defaultKey = ""
 if ($funcKeys -and $funcKeys.functionKeys) {
     $defaultKey = $funcKeys.functionKeys.default
 }
 if (-not $defaultKey) {
-    # Try the master key as fallback
     if ($funcKeys -and $funcKeys.masterKey) {
         $defaultKey = $funcKeys.masterKey
     }
 }
-
-$baseUrl = "https://$azFuncApp.azurewebsites.net/api"
 
 if ($defaultKey) {
     $codeParam = "?code=$defaultKey"
@@ -710,6 +866,7 @@ $summary = @"
   ║   ✅  Deployment Complete!                                  ║
   ╠══════════════════════════════════════════════════════════════╣
   ║                                                            ║
+  ║   Deploy Target: $($deployTarget.PadRight(38))║
   ║   Function App:  $($azFuncApp.PadRight(38))║
   ║   Connector ID:  $((if ($connectorId) { $connectorId } else { "veeva" + (Get-Culture).TextInfo.ToTitleCase($vaultApp) }).PadRight(38))║
   ║   Application:   $($vaultApp.PadRight(38))║

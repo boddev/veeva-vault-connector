@@ -54,7 +54,8 @@ This connector indexes Veeva Vault content into Microsoft 365 Copilot via the Mi
 | **Content Chunking** | Automatic for documents > 3.5 MB (4 MB Graph limit) |
 | **Concurrency** | Max 8 parallel Graph API calls with rate-limit backoff |
 | **Admin Dashboard** | Built-in web UI for monitoring progress, triggering crawls, and viewing status |
-| **Runtime** | Azure Functions v4 (Premium/Dedicated plan), Node.js 20+, TypeScript 5.5+ |
+| **Runtime** | Azure Functions v4, Node.js 20+, TypeScript 5.5+ |
+| **Hosting** | Azure Functions (Premium/Standard/Dedicated) or Azure Container Apps |
 
 ---
 
@@ -62,7 +63,7 @@ This connector indexes Veeva Vault content into Microsoft 365 Copilot via the Mi
 
 ```mermaid
 graph TB
-    subgraph Azure["Azure Functions Host"]
+    subgraph Azure["Azure Functions Host<br/>(App Service Plan or Container Apps)"]
         Deploy["deployConnection<br/>Timer: 1 AM UTC"]
         Full["fullCrawl<br/>Timer: 2 AM UTC"]
         Incr["incrementalCrawl<br/>Timer: Every 15 min"]
@@ -647,9 +648,9 @@ The connector is designed for customers with very large Vaults (10M+ documents) 
 
 ### Unlimited Function Timeout
 
-The `host.json` sets `functionTimeout: "-1"` (unlimited), which is supported on Azure Functions **Premium (EP1+)** and **Dedicated (App Service)** plans. The connector will not be killed by Azure regardless of how long the crawl takes.
+The `host.json` sets `functionTimeout: "-1"` (unlimited), which is supported on Azure Functions **Premium (EP1+)**, **Standard (S1+)**, **Dedicated (P1v3+)**, and **Container Apps** hosting. The connector will not be killed by Azure regardless of how long the crawl takes.
 
-> ⚠️ **Hosting requirement:** This connector must run on an **Azure Functions Premium** or **Dedicated** plan — not the Consumption plan. The Consumption plan has a hard 10-minute timeout that cannot be overridden.
+> ⚠️ **Hosting requirement:** This connector must run on an Azure Functions **Premium**, **Standard**, **Dedicated**, or **Container Apps** plan — not the Consumption plan. The Consumption plan has a hard 10-minute timeout that cannot be overridden.
 
 ### Progress Heartbeat
 
@@ -1145,7 +1146,16 @@ veeva-vault-connector/
 │   ├── promomats/                  # PromoMats declarative agent
 │   ├── qualitydocs/                # QualityDocs declarative agent
 │   └── rim/                        # RIM declarative agent
-├── tests/                          # Jest test suites (7 suites, 55 tests)
+├── tests/                          # Jest test suites (7 suites, 69 tests)
+├── setup/
+│   ├── .env.template               # Configuration template
+│   ├── setup.ps1                   # Automated deployment script
+│   ├── setup-gui.js                # Browser-based setup wizard
+│   ├── install.ps1                 # Prerequisite installer + launcher
+│   ├── install.bat                 # Double-click launcher for Windows
+│   └── README.md                   # Setup process documentation
+├── Dockerfile                      # Container image for ACA deployment
+├── .dockerignore                   # Docker build exclusions
 ├── package.json
 ├── tsconfig.json
 └── m365agents.yml

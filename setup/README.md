@@ -93,14 +93,18 @@ Optional flags:
 
 ### What the script does
 
-1. **Validates prerequisites** — checks `az`, `func`, `node`, `npm` are installed
+1. **Validates prerequisites** — checks `az`, `node`, `npm` (and `func` for Azure Functions target) are installed
 2. **Azure login** — prompts for login if not already authenticated
-3. **Provisions infrastructure** — Resource Group, Storage Account, Premium App Service Plan, Function App, Application Insights
+3. **Provisions infrastructure** — Resource Group, Storage Account, and either:
+   - **Azure Functions:** App Service Plan + Function App (with Always On for Standard/Dedicated SKUs)
+   - **Container Apps:** Container Registry + Container Apps Environment + Function App on ACA
 4. **Configures Entra ID** — creates app registration + service principal + client secret + Graph permissions (or uses your existing one)
 5. **Sets up Key Vault** — creates Key Vault, enables managed identity, stores secrets (opt-out with `USE_KEY_VAULT=false`)
 6. **Configures app settings** — sets all environment variables on the Function App
 7. **Verifies Veeva connectivity** — tests API authentication against your Vault
-8. **Builds and deploys** — `npm ci`, `npm run build`, `npm test`, `func azure functionapp publish`
+8. **Builds and deploys** — `npm ci`, `npm run build`, `npm test`, then:
+   - **Azure Functions:** `func azure functionapp publish`
+   - **Container Apps:** `az acr build` + configures function app container image
 9. **Initializes connection** — calls `deployConnection` to create the Graph external connection and register the schema
 10. **Starts first crawl** — triggers `fullCrawl` to begin indexing content
 11. **Opens admin dashboard** — launches the admin UI in your browser
@@ -133,7 +137,7 @@ The wizard has 5 steps:
 
 1. **Configuration** — Load an existing `.env` file (drag & drop or file picker), or proceed to enter values manually. The wizard automatically reads `setup/.env` if it exists.
 
-2. **Azure & Entra ID** — Configure Azure resource names, location, plan SKU, Key Vault, and Entra ID app registration details.
+2. **Azure & Entra ID** — Choose deployment target (Azure Functions or Container Apps), configure Azure resource names, location, plan SKU or container settings, Key Vault, and Entra ID app registration details.
 
 3. **Connector Settings** — Set Veeva credentials, Vault application, Graph API version, and crawl configuration.
 
@@ -162,10 +166,11 @@ See [`.env.template`](./.env.template) for all available variables with descript
 
 | Choice | Options | Recommendation |
 |--------|---------|----------------|
+| **Deploy Target** | `azure-functions` (default) or `container-app` | Functions for simplicity; Container Apps for container-based orgs |
 | **Entra ID** | Auto-create or bring-your-own | BYO for restricted tenants; auto-create for dev/test |
 | **Key Vault** | Enabled (default) or disabled | Always enable for production |
 | **Graph API** | `v1.0` (default) or `beta` | Use `v1.0` for production; `beta` for enhanced search features |
-| **Plan SKU** | EP1/EP2/EP3 or P1v3/P2v3 | EP1 for <100K docs; EP2 for 100K–1M; EP3 for 1M+ |
+| **Plan SKU** | EP1/EP2/EP3, S1/S2/S3, or P1v3/P2v3/P3v3 | EP1 for <100K docs; S1 for budget; EP2/EP3 for enterprise |
 
 ### Entra ID permissions required
 

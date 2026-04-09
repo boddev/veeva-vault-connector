@@ -37,6 +37,8 @@ Instead of following the manual steps below, you can use the automated setup pro
 | **PowerShell Script** | `.\setup\setup.ps1` | CI/CD pipelines, scripted deployments, headless environments |
 | **Browser GUI Wizard** | `node setup/setup-gui.js` | Interactive setup with visual feedback and form-based configuration |
 
+**Deployment targets:** Both methods support deploying to **Azure Functions** (App Service Plan) or **Azure Functions on Container Apps**. Set `DEPLOY_TARGET=container-app` in your `.env` to use Container Apps, or select it from the GUI dropdown.
+
 **Quick start:**
 
 ```bash
@@ -658,23 +660,24 @@ az functionapp plan create \
   --max-burst 3
 ```
 
-### Option 2: Azure Functions — Dedicated (App Service) Plan
+### Option 2: Azure Functions — Standard or Dedicated (App Service) Plan
 
 | Feature | Detail |
 |---------|--------|
-| **Plan SKU** | B1/B2/B3, S1/S2/S3, P1v3/P2v3/P3v3 |
+| **Plan SKU** | S1/S2/S3 (Standard), P1v3/P2v3/P3v3 (Dedicated) |
 | **Function Timeout** | Unlimited (`functionTimeout: "-1"`) |
 | **Auto-scaling** | Manual or rule-based (not as dynamic as Premium) |
-| **Always On** | Must enable "Always On" in App Service settings |
+| **Always On** | Must enable "Always On" — setup script does this automatically |
 | **VNet Integration** | Supported on Standard and Premium tiers |
 | **Cost Model** | Fixed monthly cost for the App Service Plan |
 
-**When to use Dedicated instead of Premium:**
+**When to use Standard/Dedicated instead of Premium:**
+- You want the lowest cost option with unlimited timeout (S1 ~$73/mo)
 - You already have an App Service Plan with spare capacity
 - You prefer predictable monthly costs over per-second billing
 - You don't need elastic auto-scaling (single-instance is sufficient)
 
-**Important:** You must enable **Always On** in the App Service configuration, or timer triggers will stop firing after the app idles.
+**Important:** The setup script automatically enables **Always On** for Standard and Dedicated SKUs. If deploying manually, you must enable it or timer triggers will stop firing after the app idles.
 
 ```bash
 # Example: Create Dedicated plan
@@ -703,46 +706,66 @@ az functionapp config set \
 
 | Feature | Detail |
 |---------|--------|
-| **Execution** | Containerized Azure Functions or custom container |
-| **Timeout** | Configurable (unlimited with proper configuration) |
+| **Execution** | Azure Functions hosted on Container Apps infrastructure |
+| **Timeout** | Unlimited (same Azure Functions runtime) |
 | **Scaling** | KEDA-based auto-scaling (event-driven) |
 | **VNet Integration** | Supported |
 | **Cost Model** | Per-second billing based on vCPU/memory consumption |
+| **Automated Setup** | ✅ Fully supported by `setup.ps1` and GUI wizard |
 
 **When to use Container Apps:**
 - Your organization standardizes on container-based deployments
-- You need fine-grained control over the runtime environment
+- You want per-second billing with consumption-based scaling
 - You want to run multiple connectors in a shared Container Apps Environment
+- You need fine-grained control over CPU/memory allocation
 
-**Setup:**
+**Automated deployment** — set `DEPLOY_TARGET=container-app` in your `.env` file or select "Azure Functions on Container Apps" in the GUI wizard. The setup script handles everything: ACR creation, Container Apps Environment, image build/push, and function app configuration.
 
-```dockerfile
-# Dockerfile
-FROM mcr.microsoft.com/azure-functions/node:4-node20
-
-COPY . /home/site/wwwroot
-WORKDIR /home/site/wwwroot
-RUN npm ci --production && npm run build
-```
+**Manual deployment:**
 
 ```bash
-# Create Container Apps Environment
+# 1. Create Azure Container Registry
+az acr create \
+  --name crveeva \
+  --resource-group rg-veeva-connector \
+  --location eastus \
+  --sku Basic \
+  --admin-enabled true
+
+# 2. Create Container Apps Environment
 az containerapp env create \
   --name cae-veeva-connector \
   --resource-group rg-veeva-connector \
   --location eastus
 
-# Deploy as Container App
-az containerapp create \
-  --name ca-veeva-promomats \
+# 3. Create Function App on Container Apps
+az functionapp create \
+  --name func-veeva-promomats \
   --resource-group rg-veeva-connector \
+  --storage-account stveevacrawlstate \
   --environment cae-veeva-connector \
-  --image your-registry.azurecr.io/veeva-connector:latest \
-  --min-replicas 1 \
-  --max-replicas 3 \
-  --cpu 2.0 \
-  --memory 4.0Gi
+  --runtime node --runtime-version 20 --functions-version 4 \
+  --workload-profile-name Consumption \
+  --cpu 1.0 --memory 2.0Gi
+
+# 4. Build and push container image via ACR
+az acr build \
+  --registry crveeva \
+  --resource-group rg-veeva-connector \
+  --image func-veeva-promomats:latest \
+  --file Dockerfile .
+
+# 5. Configure function app to use ACR image
+az functionapp config container set \
+  --name func-veeva-promomats \
+  --resource-group rg-veeva-connector \
+  --image crveeva.azurecr.io/func-veeva-promomats:latest \
+  --registry-server crveeva.azurecr.io \
+  --registry-username <acr-username> \
+  --registry-password <acr-password>
 ```
+
+> **Note:** The project includes a `Dockerfile` optimized for Azure Functions on Container Apps. Timer triggers and HTTP triggers work identically to the App Service Plan deployment — no code changes are required.
 
 ### Option 4: Azure App Service (Without Azure Functions)
 
@@ -750,16 +773,17 @@ If you prefer to run the connector as a standalone web application rather than A
 
 ### Hosting Comparison Summary
 
-| Feature | Functions Premium | Functions Dedicated | Container Apps | App Service |
-|---------|------------------|--------------------|----|-------------|
-| **Unlimited Timeout** | ✅ | ✅ | ✅ (configurable) | ✅ (custom scheduler) |
-| **Timer Triggers** | ✅ Built-in | ✅ Built-in | ✅ KEDA triggers | ❌ Manual scheduling |
-| **Auto-scaling** | ✅ Elastic | ⚠️ Manual rules | ✅ KEDA-based | ⚠️ Manual rules |
-| **Cold Start** | ~1s (pre-warmed) | None (Always On) | ~3-5s | None (Always On) |
-| **Setup Complexity** | Low | Low | Medium | High |
-| **Cost (low usage)** | $$ | $$$ (fixed) | $ | $$$ (fixed) |
-| **Cost (high usage)** | $$$ | $$$ (fixed) | $$ | $$$ (fixed) |
-| **Recommended** | ✅ **Yes** | ✅ Good alternative | ✅ For container orgs | ❌ Not recommended |
+| Feature | Functions Premium | Functions Standard | Functions Dedicated | Container Apps | App Service |
+|---------|------------------|--------------------|--------------------|----|-------------|
+| **Unlimited Timeout** | ✅ | ✅ | ✅ | ✅ | ✅ (custom scheduler) |
+| **Timer Triggers** | ✅ Built-in | ✅ Built-in | ✅ Built-in | ✅ Built-in | ❌ Manual scheduling |
+| **Auto-scaling** | ✅ Elastic | ⚠️ Manual rules | ⚠️ Manual rules | ✅ KEDA-based | ⚠️ Manual rules |
+| **Cold Start** | ~1s (pre-warmed) | None (Always On) | None (Always On) | ~3-5s | None (Always On) |
+| **Setup Complexity** | Low | Low | Low | Low (automated) | High |
+| **Cost (low usage)** | $$ | $ | $$$ (fixed) | $ | $$$ (fixed) |
+| **Cost (high usage)** | $$$ | $$ (fixed) | $$$ (fixed) | $$ | $$$ (fixed) |
+| **Automated Setup** | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Recommended** | ✅ **Yes** | ✅ Budget option | ✅ Good alternative | ✅ For container orgs | ❌ Not recommended |
 
 ---
 
@@ -851,6 +875,11 @@ Set up Application Insights alerts for:
 | `CONNECTOR_DESCRIPTION` | Override connector description | (from app profile) |
 | `AzureWebJobsStorage` | Azure Storage connection string | `UseDevelopmentStorage=true` |
 | `GRAPH_API_VERSION` | Microsoft Graph API version (`v1.0` or `beta`) | `v1.0` |
+| `DEPLOY_TARGET` | Deployment target (`azure-functions` or `container-app`) | `azure-functions` |
+| `AZURE_CONTAINER_REGISTRY` | ACR name (for container-app target) | Auto-derived |
+| `AZURE_CONTAINER_APP_ENV` | Container Apps Environment name | `cae-veeva-connector` |
+| `CONTAINER_CPU` | Container CPU allocation | `1.0` |
+| `CONTAINER_MEMORY` | Container memory allocation | `2.0Gi` |
 | `CRAWL_STATE_TABLE` | Azure Table name for crawl state | Auto-generated per app |
 
 ---

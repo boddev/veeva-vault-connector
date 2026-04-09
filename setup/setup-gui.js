@@ -395,6 +395,13 @@ function getWizardHTML() {
 
       <div class="field-row">
         <div class="field">
+          <label>Deploy Target *</label>
+          <select id="f_DEPLOY_TARGET" onchange="toggleDeployTarget()">
+            <option value="azure-functions">Azure Functions (App Service Plan)</option>
+            <option value="container-app">Azure Functions on Container Apps</option>
+          </select>
+        </div>
+        <div class="field">
           <label>Azure Location *</label>
           <select id="f_AZURE_LOCATION">
             <option value="eastus">East US</option>
@@ -409,18 +416,21 @@ function getWizardHTML() {
             <option value="australiaeast">Australia East</option>
           </select>
         </div>
+      </div>
+
+      <div class="field-row">
         <div class="field">
           <label>Subscription ID</label>
           <input id="f_AZURE_SUBSCRIPTION_ID" placeholder="Leave blank for default subscription">
           <div class="hint">Optional — uses your current az CLI subscription if blank</div>
         </div>
-      </div>
-
-      <div class="field-row">
         <div class="field">
           <label>Resource Group</label>
           <input id="f_AZURE_RESOURCE_GROUP" placeholder="rg-veeva-connector">
         </div>
+      </div>
+
+      <div class="field-row">
         <div class="field">
           <label>Storage Account</label>
           <input id="f_AZURE_STORAGE_ACCOUNT" placeholder="Auto-derived from app name">
@@ -434,15 +444,53 @@ function getWizardHTML() {
           <input id="f_AZURE_FUNCTION_APP" placeholder="Auto-derived from app name">
           <div class="hint">Must be globally unique</div>
         </div>
-        <div class="field">
+        <div class="field" id="skuField">
           <label>App Service Plan SKU</label>
           <select id="f_AZURE_PLAN_SKU">
-            <option value="EP1">EP1 — Premium (1 vCPU, 3.5 GB) — Recommended</option>
-            <option value="EP2">EP2 — Premium (2 vCPU, 7 GB)</option>
-            <option value="EP3">EP3 — Premium (4 vCPU, 14 GB)</option>
-            <option value="P1v3">P1v3 — Dedicated</option>
-            <option value="P2v3">P2v3 — Dedicated</option>
+            <option value="EP1">EP1 — Premium Elastic (1 vCPU, 3.5 GB) — Recommended</option>
+            <option value="EP2">EP2 — Premium Elastic (2 vCPU, 7 GB)</option>
+            <option value="EP3">EP3 — Premium Elastic (4 vCPU, 14 GB)</option>
+            <option value="S1">S1 — Standard (1 vCPU, 1.75 GB)</option>
+            <option value="S2">S2 — Standard (2 vCPU, 3.5 GB)</option>
+            <option value="S3">S3 — Standard (4 vCPU, 7 GB)</option>
+            <option value="P1v3">P1v3 — Dedicated (2 vCPU, 8 GB)</option>
+            <option value="P2v3">P2v3 — Dedicated (4 vCPU, 16 GB)</option>
+            <option value="P3v3">P3v3 — Dedicated (8 vCPU, 32 GB)</option>
           </select>
+        </div>
+      </div>
+
+      <div id="containerFields" style="display:none;">
+        <div class="field-row">
+          <div class="field">
+            <label>Container Registry Name</label>
+            <input id="f_AZURE_CONTAINER_REGISTRY" placeholder="Auto-derived from app name">
+            <div class="hint">Azure Container Registry (lowercase alphanumeric)</div>
+          </div>
+          <div class="field">
+            <label>Container Apps Environment</label>
+            <input id="f_AZURE_CONTAINER_APP_ENV" placeholder="cae-veeva-connector">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Container CPU</label>
+            <select id="f_CONTAINER_CPU">
+              <option value="0.5">0.5 vCPU</option>
+              <option value="1.0" selected>1.0 vCPU</option>
+              <option value="2.0">2.0 vCPU</option>
+              <option value="4.0">4.0 vCPU</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Container Memory</label>
+            <select id="f_CONTAINER_MEMORY">
+              <option value="1.0Gi">1.0 GB</option>
+              <option value="2.0Gi" selected>2.0 GB</option>
+              <option value="4.0Gi">4.0 GB</option>
+              <option value="8.0Gi">8.0 GB</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -622,8 +670,9 @@ let formData = {};
 let eventSource = null;
 
 const ALL_FIELDS = [
-  'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'AZURE_RESOURCE_GROUP', 'AZURE_STORAGE_ACCOUNT',
+  'DEPLOY_TARGET', 'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'AZURE_RESOURCE_GROUP', 'AZURE_STORAGE_ACCOUNT',
   'AZURE_FUNCTION_APP', 'AZURE_PLAN_SKU', 'AZURE_APP_INSIGHTS', 'USE_KEY_VAULT',
+  'AZURE_CONTAINER_REGISTRY', 'AZURE_CONTAINER_APP_ENV', 'CONTAINER_CPU', 'CONTAINER_MEMORY',
   'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'SECRET_AZURE_CLIENT_SECRET',
   'VEEVA_VAULT_DNS', 'VEEVA_USERNAME', 'SECRET_VEEVA_PASSWORD', 'VEEVA_API_VERSION',
   'VAULT_APPLICATION', 'GRAPH_API_VERSION', 'FULL_CRAWL_DAYS', 'CRAWL_BATCH_SIZE',
@@ -704,6 +753,14 @@ function populateForm(vars) {
       el.value = val;
     }
   }
+  toggleDeployTarget();
+}
+
+function toggleDeployTarget() {
+  const target = document.getElementById('f_DEPLOY_TARGET').value;
+  const isACA = target === 'container-app';
+  document.getElementById('skuField').style.display = isACA ? 'none' : '';
+  document.getElementById('containerFields').style.display = isACA ? '' : 'none';
 }
 
 function collectForm() {
@@ -759,19 +816,28 @@ function validateAndReview() {
 
 function buildSummary() {
   const table = document.getElementById('summaryTable');
+  const isACA = formData.DEPLOY_TARGET === 'container-app';
   const displayOrder = [
+    ['Deploy Target', isACA ? 'Container Apps' : 'Azure Functions'],
     ['Vault Application', formData.VAULT_APPLICATION || 'promomats'],
     ['Vault Hostname', formData.VEEVA_VAULT_DNS],
     ['Vault Username', formData.VEEVA_USERNAME],
     ['Azure Location', formData.AZURE_LOCATION || 'eastus'],
     ['Function App', formData.AZURE_FUNCTION_APP || '(auto-derived)'],
-    ['Plan SKU', formData.AZURE_PLAN_SKU || 'EP1'],
+  ];
+  if (isACA) {
+    displayOrder.push(['Container Registry', formData.AZURE_CONTAINER_REGISTRY || '(auto-derived)']);
+    displayOrder.push(['Container CPU/Memory', (formData.CONTAINER_CPU || '1.0') + ' vCPU / ' + (formData.CONTAINER_MEMORY || '2.0Gi')]);
+  } else {
+    displayOrder.push(['Plan SKU', formData.AZURE_PLAN_SKU || 'EP1']);
+  }
+  displayOrder.push(
     ['Graph API Version', formData.GRAPH_API_VERSION || 'v1.0'],
     ['Key Vault', formData.USE_KEY_VAULT === 'false' ? 'Disabled' : 'Enabled'],
     ['Entra ID App', formData.AZURE_CLIENT_ID || '(will create automatically)'],
     ['Full Crawl Days', formData.FULL_CRAWL_DAYS || '0,6'],
     ['M365 Agents', formData.DEPLOY_M365_AGENTS === 'true' ? 'Will deploy' : 'Skip'],
-  ];
+  );
 
   table.innerHTML = displayOrder.map(([label, val]) =>
     '<tr><td>' + label + '</td><td>' + (val || '—') + '</td></tr>'

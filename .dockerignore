@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+*.md
+setup
+tests
+env
+appPackage
+infra
+.env*
+local.settings.json
+jest.config.js
