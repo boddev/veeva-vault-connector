@@ -397,6 +397,7 @@ function getWizardHTML() {
         <div class="field">
           <label>Deploy Target *</label>
           <select id="f_DEPLOY_TARGET" onchange="toggleDeployTarget()">
+            <option value="flex-consumption">Flex Consumption (serverless, pay-per-use) — Recommended</option>
             <option value="azure-functions">Azure Functions (App Service Plan)</option>
             <option value="container-app">Azure Functions on Container Apps</option>
           </select>
@@ -450,9 +451,6 @@ function getWizardHTML() {
             <option value="EP1">EP1 — Premium Elastic (1 vCPU, 3.5 GB) — Recommended</option>
             <option value="EP2">EP2 — Premium Elastic (2 vCPU, 7 GB)</option>
             <option value="EP3">EP3 — Premium Elastic (4 vCPU, 14 GB)</option>
-            <option value="S1">S1 — Standard (1 vCPU, 1.75 GB)</option>
-            <option value="S2">S2 — Standard (2 vCPU, 3.5 GB)</option>
-            <option value="S3">S3 — Standard (4 vCPU, 7 GB)</option>
             <option value="P1v3">P1v3 — Dedicated (2 vCPU, 8 GB)</option>
             <option value="P2v3">P2v3 — Dedicated (4 vCPU, 16 GB)</option>
             <option value="P3v3">P3v3 — Dedicated (8 vCPU, 32 GB)</option>
@@ -759,7 +757,8 @@ function populateForm(vars) {
 function toggleDeployTarget() {
   const target = document.getElementById('f_DEPLOY_TARGET').value;
   const isACA = target === 'container-app';
-  document.getElementById('skuField').style.display = isACA ? 'none' : '';
+  const isFlex = target === 'flex-consumption';
+  document.getElementById('skuField').style.display = (isACA || isFlex) ? 'none' : '';
   document.getElementById('containerFields').style.display = isACA ? '' : 'none';
 }
 
@@ -817,8 +816,10 @@ function validateAndReview() {
 function buildSummary() {
   const table = document.getElementById('summaryTable');
   const isACA = formData.DEPLOY_TARGET === 'container-app';
+  const isFlex = formData.DEPLOY_TARGET === 'flex-consumption';
+  const targetLabel = isFlex ? 'Flex Consumption' : isACA ? 'Container Apps' : 'Azure Functions (App Service Plan)';
   const displayOrder = [
-    ['Deploy Target', isACA ? 'Container Apps' : 'Azure Functions'],
+    ['Deploy Target', targetLabel],
     ['Vault Application', formData.VAULT_APPLICATION || 'promomats'],
     ['Vault Hostname', formData.VEEVA_VAULT_DNS],
     ['Vault Username', formData.VEEVA_USERNAME],
@@ -828,7 +829,7 @@ function buildSummary() {
   if (isACA) {
     displayOrder.push(['Container Registry', formData.AZURE_CONTAINER_REGISTRY || '(auto-derived)']);
     displayOrder.push(['Container CPU/Memory', (formData.CONTAINER_CPU || '1.0') + ' vCPU / ' + (formData.CONTAINER_MEMORY || '2.0Gi')]);
-  } else {
+  } else if (!isFlex) {
     displayOrder.push(['Plan SKU', formData.AZURE_PLAN_SKU || 'EP1']);
   }
   displayOrder.push(

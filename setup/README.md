@@ -96,7 +96,8 @@ Optional flags:
 1. **Validates prerequisites** — checks `az`, `node`, `npm` (and `func` for Azure Functions target) are installed
 2. **Azure login** — prompts for login if not already authenticated
 3. **Provisions infrastructure** — Resource Group, Storage Account, and either:
-   - **Azure Functions:** App Service Plan + Function App (with Always On for Standard/Dedicated SKUs)
+   - **Flex Consumption:** Function App (serverless, no App Service Plan needed)
+   - **Azure Functions:** App Service Plan + Function App
    - **Container Apps:** Container Registry + Container Apps Environment + Function App on ACA
 4. **Configures Entra ID** — creates app registration + service principal + client secret + Graph permissions (or uses your existing one)
 5. **Sets up Key Vault** — creates Key Vault, enables managed identity, stores secrets (opt-out with `USE_KEY_VAULT=false`)
@@ -166,11 +167,11 @@ See [`.env.template`](./.env.template) for all available variables with descript
 
 | Choice | Options | Recommendation |
 |--------|---------|----------------|
-| **Deploy Target** | `azure-functions` (default) or `container-app` | Functions for simplicity; Container Apps for container-based orgs |
+| **Deploy Target** | `flex-consumption` (default), `azure-functions`, or `container-app` | Flex for serverless; Functions for always-warm; Container Apps for container orgs |
 | **Entra ID** | Auto-create or bring-your-own | BYO for restricted tenants; auto-create for dev/test |
 | **Key Vault** | Enabled (default) or disabled | Always enable for production |
 | **Graph API** | `v1.0` (default) or `beta` | Use `v1.0` for production; `beta` for enhanced search features |
-| **Plan SKU** | EP1/EP2/EP3, S1/S2/S3, or P1v3/P2v3/P3v3 | EP1 for <100K docs; S1 for budget; EP2/EP3 for enterprise |
+| **Plan SKU** | EP1/EP2/EP3 or P1v3/P2v3/P3v3 (only for `azure-functions` target) | EP1 for <100K docs; EP2/EP3 for enterprise |
 
 ### Entra ID permissions required
 

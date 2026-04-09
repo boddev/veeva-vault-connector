@@ -37,7 +37,7 @@ Instead of following the manual steps below, you can use the automated setup pro
 | **PowerShell Script** | `.\setup\setup.ps1` | CI/CD pipelines, scripted deployments, headless environments |
 | **Browser GUI Wizard** | `node setup/setup-gui.js` | Interactive setup with visual feedback and form-based configuration |
 
-**Deployment targets:** Both methods support deploying to **Azure Functions** (App Service Plan) or **Azure Functions on Container Apps**. Set `DEPLOY_TARGET=container-app` in your `.env` to use Container Apps, or select it from the GUI dropdown.
+**Deployment targets:** Both methods support three deployment targets: **Flex Consumption** (serverless, recommended), **Azure Functions on App Service Plan** (Premium/Dedicated), or **Azure Functions on Container Apps**. Set `DEPLOY_TARGET` in your `.env` or select from the GUI dropdown.
 
 **Quick start:**
 
@@ -660,49 +660,70 @@ az functionapp plan create \
   --max-burst 3
 ```
 
-### Option 2: Azure Functions — Standard or Dedicated (App Service) Plan
+### Option 2: Azure Functions — Flex Consumption (Serverless)
 
 | Feature | Detail |
 |---------|--------|
-| **Plan SKU** | S1/S2/S3 (Standard), P1v3/P2v3/P3v3 (Dedicated) |
+| **Plan** | Flex Consumption (serverless, no App Service Plan) |
 | **Function Timeout** | Unlimited (`functionTimeout: "-1"`) |
-| **Auto-scaling** | Manual or rule-based (not as dynamic as Premium) |
-| **Always On** | Must enable "Always On" — setup script does this automatically |
-| **VNet Integration** | Supported on Standard and Premium tiers |
-| **Cost Model** | Fixed monthly cost for the App Service Plan |
+| **Auto-scaling** | Event-driven, scales to zero when idle, up to 1000 instances |
+| **Cost Model** | Pay-per-use (execution time + optional always-ready instances) |
+| **OS** | Linux only |
+| **Automated Setup** | ✅ Set `DEPLOY_TARGET=flex-consumption` |
 
-**When to use Standard/Dedicated instead of Premium:**
-- You want the lowest cost option with unlimited timeout (S1 ~$73/mo)
-- You already have an App Service Plan with spare capacity
-- You prefer predictable monthly costs over per-second billing
-- You don't need elastic auto-scaling (single-instance is sufficient)
+**When to use Flex Consumption:**
+- You want the lowest cost option — pay only when code is running
+- You want serverless auto-scaling with unlimited timeout
+- You don't need a dedicated App Service Plan
+- Your workload is bursty (e.g., periodic crawls with long idle periods)
 
-**Important:** The setup script automatically enables **Always On** for Standard and Dedicated SKUs. If deploying manually, you must enable it or timer triggers will stop firing after the app idles.
+> **Note:** Flex Consumption is Linux-only, code-only (no custom containers), and is available in [supported regions](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to#view-currently-supported-regions).
 
 ```bash
-# Example: Create Dedicated plan
+# Example: Create Flex Consumption function app
+az functionapp create \
+  --name func-veeva-promomats \
+  --resource-group rg-veeva-connector \
+  --storage-account stveevacrawlstate \
+  --flexconsumption-location eastus \
+  --runtime node --runtime-version 20
+```
+
+### Option 3: Azure Functions — Premium or Dedicated (App Service Plan)
+
+| Feature | Detail |
+|---------|--------|
+| **Plan SKU** | EP1/EP2/EP3 (Premium), P1v3/P2v3/P3v3 (Dedicated) |
+| **Function Timeout** | Unlimited (`functionTimeout: "-1"`) |
+| **Auto-scaling** | Premium: elastic auto-scale; Dedicated: manual/rule-based |
+| **VNet Integration** | Supported |
+| **Cost Model** | Fixed monthly cost for the App Service Plan |
+| **Automated Setup** | ✅ Set `DEPLOY_TARGET=azure-functions` |
+
+**When to use Premium/Dedicated instead of Flex:**
+- You need VNet integration or private endpoints
+- You already have an App Service Plan with spare capacity
+- You prefer always-warm instances (no cold start latency)
+- You need predictable monthly costs
+
+```bash
+# Example: Create Premium plan
 az appservice plan create \
-  --name plan-veeva-dedicated \
+  --name plan-veeva-connector \
   --resource-group rg-veeva-connector \
   --location eastus \
-  --sku P1v3 \
+  --sku EP1 \
   --is-linux true
 
 az functionapp create \
   --name func-veeva-promomats \
   --resource-group rg-veeva-connector \
-  --plan plan-veeva-dedicated \
+  --plan plan-veeva-connector \
   --storage-account stveevacrawlstate \
   --runtime node --runtime-version 20 --functions-version 4 --os-type Linux
-
-# Enable Always On
-az functionapp config set \
-  --name func-veeva-promomats \
-  --resource-group rg-veeva-connector \
-  --always-on true
 ```
 
-### Option 3: Azure Container Apps
+### Option 4: Azure Container Apps
 
 | Feature | Detail |
 |---------|--------|
@@ -767,23 +788,26 @@ az functionapp config container set \
 
 > **Note:** The project includes a `Dockerfile` optimized for Azure Functions on Container Apps. Timer triggers and HTTP triggers work identically to the App Service Plan deployment — no code changes are required.
 
-### Option 4: Azure App Service (Without Azure Functions)
+### Option 5: Azure App Service (Without Azure Functions)
 
 If you prefer to run the connector as a standalone web application rather than Azure Functions, you would need to implement your own scheduling (e.g., using `node-cron` or Azure Logic Apps for triggers). This is **not recommended** unless you have specific requirements that prevent using Azure Functions.
 
 ### Hosting Comparison Summary
 
-| Feature | Functions Premium | Functions Standard | Functions Dedicated | Container Apps | App Service |
-|---------|------------------|--------------------|--------------------|----|-------------|
-| **Unlimited Timeout** | ✅ | ✅ | ✅ | ✅ | ✅ (custom scheduler) |
-| **Timer Triggers** | ✅ Built-in | ✅ Built-in | ✅ Built-in | ✅ Built-in | ❌ Manual scheduling |
-| **Auto-scaling** | ✅ Elastic | ⚠️ Manual rules | ⚠️ Manual rules | ✅ KEDA-based | ⚠️ Manual rules |
-| **Cold Start** | ~1s (pre-warmed) | None (Always On) | None (Always On) | ~3-5s | None (Always On) |
-| **Setup Complexity** | Low | Low | Low | Low (automated) | High |
-| **Cost (low usage)** | $$ | $ | $$$ (fixed) | $ | $$$ (fixed) |
-| **Cost (high usage)** | $$$ | $$ (fixed) | $$$ (fixed) | $$ | $$$ (fixed) |
-| **Automated Setup** | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **Recommended** | ✅ **Yes** | ✅ Budget option | ✅ Good alternative | ✅ For container orgs | ❌ Not recommended |
+| Feature | Flex Consumption | Functions Premium | Functions Dedicated | Container Apps |
+|---------|-----------------|------------------|--------------------|----|
+| **Unlimited Timeout** | ✅ | ✅ | ✅ | ✅ |
+| **Timer Triggers** | ✅ Built-in | ✅ Built-in | ✅ Built-in | ✅ Built-in |
+| **Auto-scaling** | ✅ Event-driven | ✅ Elastic | ⚠️ Manual rules | ✅ KEDA-based |
+| **Scale to Zero** | ✅ | ❌ (pre-warmed) | ❌ (always running) | ✅ |
+| **Cold Start** | ~3-5s | ~1s (pre-warmed) | None (always running) | ~3-5s |
+| **Setup Complexity** | Low | Low | Low | Low (automated) |
+| **Cost (low usage)** | $ (near-free when idle) | $$ | $$$ (fixed) | $ |
+| **Cost (high usage)** | $$ | $$$ | $$$ (fixed) | $$ |
+| **Container Support** | ❌ | ✅ Linux | ✅ Linux | ✅ |
+| **VNet Integration** | ✅ | ✅ | ✅ | ✅ |
+| **Automated Setup** | ✅ | ✅ | ✅ | ✅ |
+| **Recommended** | ✅ **Best for most** | ✅ Low-latency | ✅ Predictable cost | ✅ Container orgs |
 
 ---
 
@@ -795,8 +819,8 @@ The single most important factor in planning your deployment is **expected crawl
 
 | Vault Size | Estimated Full Crawl | Estimated Incremental | Recommended Plan |
 |-----------|---------------------|----------------------|------------------|
-| 10,000 documents | 30–60 minutes | < 1 minute | EP1 / B1 |
-| 100,000 documents | 4–8 hours | 1–5 minutes | EP1 / S1 |
+| 10,000 documents | 30–60 minutes | < 1 minute | Flex Consumption / EP1 |
+| 100,000 documents | 4–8 hours | 1–5 minutes | Flex Consumption / EP1 |
 | 500,000 documents | 12–24 hours | 5–15 minutes | EP2 / P1v3 |
 | 1,000,000 documents | 24–48 hours | 10–30 minutes | EP2 / P2v3 |
 | 5,000,000+ documents | 3–7 days | 30–60 minutes | EP3 / P3v3 |
@@ -875,7 +899,7 @@ Set up Application Insights alerts for:
 | `CONNECTOR_DESCRIPTION` | Override connector description | (from app profile) |
 | `AzureWebJobsStorage` | Azure Storage connection string | `UseDevelopmentStorage=true` |
 | `GRAPH_API_VERSION` | Microsoft Graph API version (`v1.0` or `beta`) | `v1.0` |
-| `DEPLOY_TARGET` | Deployment target (`azure-functions` or `container-app`) | `azure-functions` |
+| `DEPLOY_TARGET` | Deployment target (`flex-consumption`, `azure-functions`, or `container-app`) | `flex-consumption` |
 | `AZURE_CONTAINER_REGISTRY` | ACR name (for container-app target) | Auto-derived |
 | `AZURE_CONTAINER_APP_ENV` | Container Apps Environment name | `cae-veeva-connector` |
 | `CONTAINER_CPU` | Container CPU allocation | `1.0` |

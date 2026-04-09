@@ -163,6 +163,7 @@ $useKeyVault    = (Get-EnvValue $envVars "USE_KEY_VAULT" "true") -eq "true"
 $deployAgents   = (Get-EnvValue $envVars "DEPLOY_M365_AGENTS" "false") -eq "true"
 $deployTarget   = Get-EnvValue $envVars "DEPLOY_TARGET" "azure-functions"
 $isContainerApp = ($deployTarget -eq "container-app")
+$isFlexConsumption = ($deployTarget -eq "flex-consumption")
 
 # Auto-derive resource names (user can override via .env)
 $azResourceGroup   = Get-EnvValue $envVars "AZURE_RESOURCE_GROUP"   "rg-veeva-connector"
@@ -210,6 +211,9 @@ if ($isContainerApp) {
     Write-Info "Container Registry:  $azContainerRegistry"
     Write-Info "Container Env:       $azContainerAppEnv"
     Write-Info "Container CPU/Mem:   $containerCpu / $containerMemory"
+} elseif ($isFlexConsumption) {
+    Write-Info "Function App:        $azFuncApp"
+    Write-Info "Plan:                Flex Consumption (serverless)"
 } else {
     Write-Info "Function App:        $azFuncApp"
     Write-Info "Plan SKU:            $azPlanSku"
@@ -365,7 +369,6 @@ if ($isContainerApp) {
     if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
         Write-Ok "Function App already exists: $azFuncApp"
     } else {
-        $acrLoginServer = "$azContainerRegistry.azurecr.io"
         Invoke-AzCmd -Arguments @(
             "functionapp", "create",
             "--name", $azFuncApp,
@@ -382,8 +385,28 @@ if ($isContainerApp) {
         Write-Ok "Created Function App on Container Apps: $azFuncApp"
     }
 
+} elseif ($isFlexConsumption) {
+    # ── Flex Consumption path ────────────────────────────────────────────────
+
+    Write-Info "Creating Flex Consumption Function App: $azFuncApp"
+    $existing = Invoke-AzJson -Arguments @("functionapp", "show", "--name", $azFuncApp, "--resource-group", $azResourceGroup) -AllowFailure
+    if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
+        Write-Ok "Function App already exists: $azFuncApp"
+    } else {
+        Invoke-AzCmd -Arguments @(
+            "functionapp", "create",
+            "--name", $azFuncApp,
+            "--resource-group", $azResourceGroup,
+            "--storage-account", $azStorageAccount,
+            "--flexconsumption-location", $azLocation,
+            "--runtime", "node",
+            "--runtime-version", "20"
+        ) | Out-Null
+        Write-Ok "Created Flex Consumption Function App: $azFuncApp"
+    }
+
 } else {
-    # ── Azure Functions path ─────────────────────────────────────────────────
+    # ── Azure Functions (Premium/Dedicated) path ─────────────────────────────
 
     # 3c. App Service Plan
     Write-Info "Creating App Service Plan: $azAppPlan ($azPlanSku)"
@@ -421,22 +444,10 @@ if ($isContainerApp) {
         ) | Out-Null
         Write-Ok "Created Function App: $azFuncApp"
     }
-
-    # Enable Always On for Standard and Dedicated SKUs (required for timer triggers)
-    if ($azPlanSku -match '^(S[1-3]|B[1-3]|P\d+v\d+)$') {
-        Write-Info "Enabling Always On for $azPlanSku plan..."
-        Invoke-AzCmd -Arguments @(
-            "functionapp", "config", "set",
-            "--name", $azFuncApp,
-            "--resource-group", $azResourceGroup,
-            "--always-on", "true"
-        ) | Out-Null
-        Write-Ok "Always On enabled (required for Dedicated/Standard plans)"
-    }
 }
 
-# 3e. Application Insights (if name provided)
-if ($azAppInsights -ne "") {
+# 3e. Application Insights (if name provided; Flex auto-creates its own)
+if ($azAppInsights -ne "" -and -not $isFlexConsumption) {
     Write-Info "Creating Application Insights: $azAppInsights"
     $existing = Invoke-AzJson -Arguments @("monitor", "app-insights", "component", "show", "--app", $azAppInsights, "--resource-group", $azResourceGroup) -AllowFailure
     if ($null -ne $existing -and $LASTEXITCODE -eq 0) {
@@ -766,7 +777,6 @@ Write-Step "9/10" "Initializing Graph Connection & Starting Crawl"
 
 # Get function base URL
 Write-Info "Retrieving function app URL..."
-Start-Sleep -Seconds 10  # Wait for deployment to stabilize
 
 if ($isContainerApp) {
     # For Container Apps, get the FQDN from the function app properties
@@ -808,6 +818,26 @@ if ($defaultKey) {
 } else {
     Write-Warn "Could not retrieve function key. Trying without auth..."
     $codeParam = ""
+}
+
+# Wait for the function app to be ready (cold start / Flex scale-from-zero)
+Write-Info "Waiting for function app to become ready..."
+$maxRetries = 12
+$retryDelay = 10
+$ready = $false
+for ($i = 1; $i -le $maxRetries; $i++) {
+    try {
+        $statusResp = Invoke-RestMethod -Uri "$baseUrl/status$codeParam" -Method Get -TimeoutSec 15 -ErrorAction Stop
+        Write-Ok "Function app is ready (attempt $i/$maxRetries)"
+        $ready = $true
+        break
+    } catch {
+        Write-Info "Attempt $i/$maxRetries — not ready yet, retrying in ${retryDelay}s..."
+        Start-Sleep -Seconds $retryDelay
+    }
+}
+if (-not $ready) {
+    Write-Warn "Function app did not respond after $maxRetries attempts. Proceeding anyway..."
 }
 
 # Deploy connection

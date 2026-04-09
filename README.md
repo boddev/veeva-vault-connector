@@ -55,7 +55,7 @@ This connector indexes Veeva Vault content into Microsoft 365 Copilot via the Mi
 | **Concurrency** | Max 8 parallel Graph API calls with rate-limit backoff |
 | **Admin Dashboard** | Built-in web UI for monitoring progress, triggering crawls, and viewing status |
 | **Runtime** | Azure Functions v4, Node.js 20+, TypeScript 5.5+ |
-| **Hosting** | Azure Functions (Premium/Standard/Dedicated) or Azure Container Apps |
+| **Hosting** | Azure Functions (Flex Consumption/Premium/Dedicated) or Azure Container Apps |
 
 ---
 
@@ -63,7 +63,7 @@ This connector indexes Veeva Vault content into Microsoft 365 Copilot via the Mi
 
 ```mermaid
 graph TB
-    subgraph Azure["Azure Functions Host<br/>(App Service Plan or Container Apps)"]
+    subgraph Azure["Azure Functions Host<br/>(Flex Consumption, App Service Plan, or Container Apps)"]
         Deploy["deployConnection<br/>Timer: 1 AM UTC"]
         Full["fullCrawl<br/>Timer: 2 AM UTC"]
         Incr["incrementalCrawl<br/>Timer: Every 15 min"]
@@ -648,9 +648,9 @@ The connector is designed for customers with very large Vaults (10M+ documents) 
 
 ### Unlimited Function Timeout
 
-The `host.json` sets `functionTimeout: "-1"` (unlimited), which is supported on Azure Functions **Premium (EP1+)**, **Standard (S1+)**, **Dedicated (P1v3+)**, and **Container Apps** hosting. The connector will not be killed by Azure regardless of how long the crawl takes.
+The `host.json` sets `functionTimeout: "-1"` (unlimited), which is supported on Azure Functions **Flex Consumption**, **Premium (EP1+)**, **Dedicated (P1v3+)**, and **Container Apps** hosting. The connector will not be killed by Azure regardless of how long the crawl takes.
 
-> ⚠️ **Hosting requirement:** This connector must run on an Azure Functions **Premium**, **Standard**, **Dedicated**, or **Container Apps** plan — not the Consumption plan. The Consumption plan has a hard 10-minute timeout that cannot be overridden.
+> ⚠️ **Hosting requirement:** This connector must run on an Azure Functions **Flex Consumption**, **Premium**, **Dedicated**, or **Container Apps** plan — not the legacy Consumption plan. The legacy Consumption plan has a hard 10-minute timeout that cannot be overridden.
 
 ### Progress Heartbeat
 
