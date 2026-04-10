@@ -518,7 +518,16 @@ if ($entraAutoCreate) {
     # In cross-tenant mode, switch to the M365 tenant for app creation
     if ($isCrossTenant) {
         Write-Info "Switching to M365 tenant ($azTenantId) for app registration..."
-        Invoke-AzCmd -Arguments @("login", "--tenant", $azTenantId)
+        Write-Info "You will be prompted to authenticate to your M365 tenant..."
+        Invoke-AzCmd -Arguments @("login", "--tenant", $azTenantId, "--allow-no-subscriptions")
+        # Verify we're in the correct tenant
+        $adAccount = Invoke-AzJson -Arguments @("account", "show")
+        if ($adAccount.tenantId -ne $azTenantId) {
+            Write-Warn "WARNING: Current tenant ($($adAccount.tenantId)) does not match M365 tenant ($azTenantId)"
+            Write-Warn "App registration may be created in the wrong tenant."
+        } else {
+            Write-Ok "Authenticated to M365 tenant: $azTenantId"
+        }
     }
 
     Write-Info "Creating Entra ID app registration: Veeva Vault Copilot Connector"
@@ -587,7 +596,12 @@ if ($entraAutoCreate) {
         Write-Warn "Please grant consent manually in the Azure Portal:"
         Write-Warn "  https://entra.microsoft.com → App registrations → Veeva Vault Copilot Connector → API permissions → Grant admin consent"
         Write-Host ""
-        Read-Host "  Press Enter after granting consent to continue"
+        try {
+            [Console]::ReadKey($true) | Out-Null
+            Write-Host "  Continuing..."
+        } catch {
+            Write-Warn "Non-interactive mode detected — continuing. Grant admin consent before using the connector."
+        }
     } else {
         Write-Ok "Admin consent granted for all permissions"
     }
