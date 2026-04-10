@@ -172,6 +172,7 @@ See [`.env.template`](./.env.template) for all available variables with descript
 | **Key Vault** | Enabled (default) or disabled | Always enable for production |
 | **Graph API** | `v1.0` (default) or `beta` | Use `v1.0` for production; `beta` for enhanced search features |
 | **Plan SKU** | FC1 (Flex Consumption, serverless), EP1/EP2/EP3 (Premium Elastic), P1v3/P2v3/P3v3 (Dedicated) | FC1 default with flex-consumption; EP1 for always-warm; EP2/EP3 for enterprise |
+| **Cross-Tenant** | Set `AZURE_HOSTING_TENANT_ID` if Azure sub is in a different tenant than M365 | Leave blank for single-tenant; requires pre-created app reg in M365 tenant |
 
 ### Entra ID permissions required
 

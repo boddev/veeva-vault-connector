@@ -198,6 +198,10 @@ $azClientId     = Get-EnvValue $envVars "AZURE_CLIENT_ID" ""
 $azClientSecret = Get-EnvValue $envVars "SECRET_AZURE_CLIENT_SECRET" ""
 $entraAutoCreate = ($azClientId -eq "")
 
+# Cross-tenant hosting (optional)
+$azHostingTenantId = Get-EnvValue $envVars "AZURE_HOSTING_TENANT_ID" ""
+$isCrossTenant = ($azHostingTenantId -ne "")
+
 # Optional crawl settings
 $fullCrawlDays   = Get-EnvValue $envVars "FULL_CRAWL_DAYS" "0,6"
 $crawlBatchSize  = Get-EnvValue $envVars "CRAWL_BATCH_SIZE" "25"
@@ -227,7 +231,13 @@ if ($isContainerApp) {
 }
 Write-Info "Graph API Version:   $graphApiVer"
 Write-Info "Key Vault:           $(if ($useKeyVault) { 'Enabled' } else { 'Disabled' })"
-Write-Info "Entra ID App:        $(if ($entraAutoCreate) { 'Will create automatically' } else { 'Using provided: ' + $azClientId })"
+if ($isCrossTenant) {
+    Write-Info "Cross-Tenant:        YES"
+    Write-Info "  Hosting Tenant:    $azHostingTenantId (Azure resources)"
+    Write-Info "  M365 Tenant:       $(if ($azTenantId -ne '') { $azTenantId } else { '(will prompt)' }) (Graph API / Entra ID)"
+} else {
+    Write-Info "Entra ID App:        $(if ($entraAutoCreate) { 'Will create automatically' } else { 'Using provided: ' + $azClientId })"
+}
 Write-Host ""
 
 # ─── Step 1: Prerequisites ──────────────────────────────────────────────────
@@ -269,14 +279,41 @@ Write-Ok "Node.js version $nodeVer meets minimum (20+)"
 
 Write-Step "2/10" "Azure Authentication"
 
-$account = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
-if ($null -eq $account -or $LASTEXITCODE -ne 0) {
-    Write-Info "Not logged in to Azure. Opening browser for login..."
-    Invoke-AzCmd -Arguments @("login")
-    $account = Invoke-AzJson -Arguments @("account", "show")
+if ($isCrossTenant) {
+    # Cross-tenant: validate that app registration details are provided
+    if ($entraAutoCreate) {
+        Write-Warn "Cross-tenant deployment detected (AZURE_HOSTING_TENANT_ID is set)."
+        Write-Warn "You must pre-create the Entra ID app registration in your M365 tenant"
+        Write-Warn "and provide AZURE_CLIENT_ID and SECRET_AZURE_CLIENT_SECRET in .env."
+        Write-Host ""
+        $azClientId = Require-EnvValue $envVars "AZURE_CLIENT_ID" "Enter the Client ID from your M365 tenant app registration"
+        $azClientSecret = Require-EnvValue $envVars "SECRET_AZURE_CLIENT_SECRET" "Enter the Client Secret from your M365 tenant app registration"
+        $entraAutoCreate = $false
+    }
+    if ($azTenantId -eq "") {
+        $azTenantId = Require-EnvValue $envVars "AZURE_TENANT_ID" "Enter your M365 tenant ID (where the app registration lives)"
+    }
+
+    Write-Info "Logging into Azure hosting tenant: $azHostingTenantId"
+    $account = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
+    $needLogin = ($null -eq $account -or $LASTEXITCODE -ne 0 -or $account.tenantId -ne $azHostingTenantId)
+    if ($needLogin) {
+        Write-Info "Opening browser for Azure login (hosting tenant)..."
+        Invoke-AzCmd -Arguments @("login", "--tenant", $azHostingTenantId)
+        $account = Invoke-AzJson -Arguments @("account", "show")
+    }
+    Write-Ok "Logged in as: $($account.user.name) (hosting tenant)"
+    Write-Info "M365 Tenant (Graph API): $azTenantId"
+} else {
+    $account = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
+    if ($null -eq $account -or $LASTEXITCODE -ne 0) {
+        Write-Info "Not logged in to Azure. Opening browser for login..."
+        Invoke-AzCmd -Arguments @("login")
+        $account = Invoke-AzJson -Arguments @("account", "show")
+    }
+    Write-Ok "Logged in as: $($account.user.name)"
 }
 
-Write-Ok "Logged in as: $($account.user.name)"
 Write-Info "Subscription: $($account.name) ($($account.id))"
 
 # Set subscription if specified
@@ -288,8 +325,8 @@ if ($azSubId -ne "") {
     Write-Ok "Active subscription: $($account.name)"
 }
 
-# Capture tenant ID from login if not provided
-if ($azTenantId -eq "") {
+# Capture tenant ID from login if not provided (single-tenant only)
+if ($azTenantId -eq "" -and -not $isCrossTenant) {
     $azTenantId = $account.tenantId
     Write-Info "Using tenant ID from login: $azTenantId"
 }
@@ -560,6 +597,9 @@ if ($entraAutoCreate) {
 
 } else {
     Write-Ok "Using existing Entra ID app: $azClientId"
+    if ($isCrossTenant) {
+        Write-Info "Cross-tenant mode: app registration is in M365 tenant $azTenantId"
+    }
     if ($azTenantId -eq "") {
         $azTenantId = Require-EnvValue $envVars "AZURE_TENANT_ID" "Enter your Entra ID tenant ID"
     }

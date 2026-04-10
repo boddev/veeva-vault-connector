@@ -28,6 +28,7 @@ A unified Microsoft 365 Copilot connector for Veeva Vault that indexes content f
 - [Azure Functions Endpoints](#azure-functions-endpoints)
 - [Declarative Agents](#declarative-agents)
 - [Multi-Application Deployment](#multi-application-deployment)
+- [Cross-Tenant Deployment](#cross-tenant-deployment)
 - [Content Chunking](#content-chunking)
 - [Best Practices Compliance](#best-practices-compliance)
 
@@ -1056,6 +1057,14 @@ Each deployment:
 - Registers its own schema (base + app-specific extensions)
 - Has its own crawl schedules and state
 - Deploys its own declarative agent
+
+---
+
+## Cross-Tenant Deployment
+
+The connector supports hosting Azure resources in a **different tenant** than your Microsoft 365 tenant. For example, your Azure subscription (Tenant A) hosts the Function App, while the Entra ID app registration and Graph external connections live in your M365 tenant (Tenant B).
+
+Set `AZURE_HOSTING_TENANT_ID` in your `.env` to enable this. The app registration must be pre-created in the M365 tenant. See [Setup.md — Cross-Tenant Deployment](Setup.md#cross-tenant-deployment) for detailed instructions.
 
 ---
 

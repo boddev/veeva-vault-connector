@@ -21,6 +21,7 @@ This guide walks you through every step required to deploy the Veeva Vault Unifi
 - [Step 8: Verify the Deployment](#step-8-verify-the-deployment)
 - [Step 9: Deploy the M365 Copilot Agents](#step-9-deploy-the-m365-copilot-agents)
 - [Multi-Application Deployment](#multi-application-deployment)
+- [Cross-Tenant Deployment](#cross-tenant-deployment)
 - [Azure Hosting Options](#azure-hosting-options)
 - [Production Recommendations](#production-recommendations)
 - [Environment Variable Reference](#environment-variable-reference)
@@ -620,6 +621,73 @@ az functionapp config appsettings set --name func-veeva-rim --resource-group rg-
 
 ---
 
+## Cross-Tenant Deployment
+
+In some organizations, the Azure subscription used for hosting infrastructure is in a **different Entra ID tenant** than the Microsoft 365 tenant where search results should appear. For example:
+
+- **Tenant A** (Hosting): Azure subscription where the Function App runs
+- **Tenant B** (M365): The Microsoft 365 tenant where users search via Copilot
+
+The connector fully supports this scenario — no code changes are required. The `ClientSecretCredential` authenticates to whichever tenant you specify in `AZURE_TENANT_ID`.
+
+### How It Works
+
+```
+┌──────────────────────────────┐      ┌──────────────────────────────┐
+│  Tenant A (Azure Hosting)    │      │  Tenant B (Microsoft 365)    │
+│                              │      │                              │
+│  ┌────────────────────────┐  │      │  ┌────────────────────────┐  │
+│  │ Azure Function App     │──┼──────┼──│ Entra ID App Reg       │  │
+│  │ (runs the connector)   │  │      │  │ (client ID + secret)   │  │
+│  └────────────────────────┘  │      │  └────────────────────────┘  │
+│                              │      │          │                   │
+│  ┌────────────────────────┐  │      │  ┌───────▼────────────────┐  │
+│  │ Storage Account        │  │      │  │ Microsoft Graph API    │  │
+│  │ Key Vault              │  │      │  │ External Connections   │  │
+│  └────────────────────────┘  │      │  └────────────────────────┘  │
+└──────────────────────────────┘      └──────────────────────────────┘
+```
+
+### Prerequisites
+
+1. **Tenant B**: Create the Entra ID app registration manually (see [Step 2](#step-2-register-the-entra-id-application))
+2. **Tenant B**: Grant the app the required Graph API permissions and admin consent
+3. **Tenant A**: Have an Azure subscription with sufficient permissions to create resources
+4. Record the **Client ID**, **Client Secret**, and **Tenant ID** from the Tenant B app registration
+
+### Configuration
+
+In your `.env` file:
+
+```bash
+# Tenant B — your M365 tenant (where Graph connections and search results live)
+AZURE_TENANT_ID=<tenant-b-id>
+AZURE_CLIENT_ID=<app-reg-client-id-from-tenant-b>
+SECRET_AZURE_CLIENT_SECRET=<app-reg-secret-from-tenant-b>
+
+# Tenant A — your Azure hosting tenant (where the Function App runs)
+AZURE_HOSTING_TENANT_ID=<tenant-a-id>
+AZURE_SUBSCRIPTION_ID=<subscription-in-tenant-a>
+```
+
+### Automated Setup
+
+The guided setup script (`setup/install.bat`) handles cross-tenant automatically:
+
+1. Detects `AZURE_HOSTING_TENANT_ID` is set
+2. Validates that `AZURE_CLIENT_ID` and `SECRET_AZURE_CLIENT_SECRET` are provided (app auto-creation is disabled in cross-tenant mode — the app must exist in Tenant B)
+3. Logs you into **Tenant A** for infrastructure deployment
+4. Configures the Function App with **Tenant B** credentials for Graph API access
+
+### Important Notes
+
+- **App registration must be pre-created** in Tenant B. The setup script cannot create apps across tenants.
+- **Admin consent** must be granted in Tenant B before the connector can access the Graph API.
+- **Key Vault** (if enabled) is created in Tenant A. The managed identity used for Key Vault access is separate from the Graph API service principal.
+- **ACLs** use `AZURE_TENANT_ID` (Tenant B) for the `everyoneExceptGuests` access control — ensuring only Tenant B users can see search results.
+
+---
+
 ## Azure Hosting Options
 
 The connector is built as an Azure Functions v4 application but can be hosted on several Azure compute platforms. The key constraint is **long-running execution support** — full crawls of large Vaults (10M+ documents) can run for 24 hours or more.
@@ -904,6 +972,7 @@ Set up Application Insights alerts for:
 | `AZURE_CONTAINER_APP_ENV` | Container Apps Environment name | `cae-veeva-connector` |
 | `CONTAINER_CPU` | Container CPU allocation | `1.0` |
 | `CONTAINER_MEMORY` | Container memory allocation | `2.0Gi` |
+| `AZURE_HOSTING_TENANT_ID` | Hosting tenant ID (cross-tenant only) | (blank for single-tenant) |
 | `CRAWL_STATE_TABLE` | Azure Table name for crawl state | Auto-generated per app |
 
 ---

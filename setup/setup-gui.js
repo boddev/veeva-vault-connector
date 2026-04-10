@@ -515,8 +515,9 @@ function getWizardHTML() {
 
       <div class="field-row">
         <div class="field">
-          <label>Tenant ID</label>
+          <label>M365 Tenant ID</label>
           <input id="f_AZURE_TENANT_ID" placeholder="Auto-detected from az login">
+          <div class="hint">The Microsoft 365 tenant where Graph external connections are created</div>
         </div>
         <div class="field">
           <label>Client ID</label>
@@ -528,6 +529,12 @@ function getWizardHTML() {
       <div class="field">
         <label>Client Secret</label>
         <input id="f_SECRET_AZURE_CLIENT_SECRET" type="password" placeholder="Leave blank if auto-creating">
+      </div>
+
+      <div class="field">
+        <label>Hosting Tenant ID (Cross-Tenant — Optional)</label>
+        <input id="f_AZURE_HOSTING_TENANT_ID" placeholder="Leave blank for single-tenant deployment">
+        <div class="hint">Set this only if your Azure subscription is in a different tenant than your M365 tenant above. The app registration must be pre-created in the M365 tenant.</div>
       </div>
     </div>
 
@@ -672,7 +679,7 @@ const ALL_FIELDS = [
   'DEPLOY_TARGET', 'AZURE_SUBSCRIPTION_ID', 'AZURE_LOCATION', 'AZURE_RESOURCE_GROUP', 'AZURE_STORAGE_ACCOUNT',
   'AZURE_FUNCTION_APP', 'AZURE_PLAN_SKU', 'AZURE_APP_INSIGHTS', 'USE_KEY_VAULT',
   'AZURE_CONTAINER_REGISTRY', 'AZURE_CONTAINER_APP_ENV', 'CONTAINER_CPU', 'CONTAINER_MEMORY',
-  'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'SECRET_AZURE_CLIENT_SECRET',
+  'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'SECRET_AZURE_CLIENT_SECRET', 'AZURE_HOSTING_TENANT_ID',
   'VEEVA_VAULT_DNS', 'VEEVA_USERNAME', 'SECRET_VEEVA_PASSWORD', 'VEEVA_API_VERSION',
   'VAULT_APPLICATION', 'GRAPH_API_VERSION', 'FULL_CRAWL_DAYS', 'CRAWL_BATCH_SIZE',
   'PROGRESS_BATCH_SIZE', 'DEPLOY_M365_AGENTS', 'AUTO_DISCOVER_OBJECTS',
@@ -846,6 +853,15 @@ function buildSummary() {
     ['Graph API Version', formData.GRAPH_API_VERSION || 'v1.0'],
     ['Key Vault', formData.USE_KEY_VAULT === 'false' ? 'Disabled' : 'Enabled'],
     ['Entra ID App', formData.AZURE_CLIENT_ID || '(will create automatically)'],
+  );
+  if (formData.AZURE_HOSTING_TENANT_ID) {
+    displayOrder.push(
+      ['Cross-Tenant', 'Yes'],
+      ['Hosting Tenant', formData.AZURE_HOSTING_TENANT_ID],
+      ['M365 Tenant', formData.AZURE_TENANT_ID || '(will prompt)'],
+    );
+  }
+  displayOrder.push(
     ['Full Crawl Days', formData.FULL_CRAWL_DAYS || '0,6'],
     ['M365 Agents', formData.DEPLOY_M365_AGENTS === 'true' ? 'Will deploy' : 'Skip'],
   );
