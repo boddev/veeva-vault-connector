@@ -171,7 +171,7 @@ See [`.env.template`](./.env.template) for all available variables with descript
 | **Entra ID** | Auto-create or bring-your-own | BYO for restricted tenants; auto-create for dev/test |
 | **Key Vault** | Enabled (default) or disabled | Always enable for production |
 | **Graph API** | `v1.0` (default) or `beta` | Use `v1.0` for production; `beta` for enhanced search features |
-| **Plan SKU** | EP1/EP2/EP3 or P1v3/P2v3/P3v3 (only for `azure-functions` target) | EP1 for <100K docs; EP2/EP3 for enterprise |
+| **Plan SKU** | FC1 (Flex Consumption, serverless), EP1/EP2/EP3 (Premium Elastic), P1v3/P2v3/P3v3 (Dedicated) | FC1 default with flex-consumption; EP1 for always-warm; EP2/EP3 for enterprise |
 
 ### Entra ID permissions required
 

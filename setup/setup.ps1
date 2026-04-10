@@ -157,13 +157,20 @@ if (Test-Path $EnvFile) {
 $vaultApp       = Get-EnvValue $envVars "VAULT_APPLICATION" "promomats"
 $vaultAppClean  = $vaultApp.ToLower() -replace '[^a-z0-9]', ''
 $azLocation     = Get-EnvValue $envVars "AZURE_LOCATION" "eastus"
-$azPlanSku      = Get-EnvValue $envVars "AZURE_PLAN_SKU" "EP1"
+$azPlanSku      = Get-EnvValue $envVars "AZURE_PLAN_SKU" "FC1"
 $graphApiVer    = Get-EnvValue $envVars "GRAPH_API_VERSION" "v1.0"
 $useKeyVault    = (Get-EnvValue $envVars "USE_KEY_VAULT" "true") -eq "true"
 $deployAgents   = (Get-EnvValue $envVars "DEPLOY_M365_AGENTS" "false") -eq "true"
-$deployTarget   = Get-EnvValue $envVars "DEPLOY_TARGET" "azure-functions"
+$deployTarget   = Get-EnvValue $envVars "DEPLOY_TARGET" "flex-consumption"
 $isContainerApp = ($deployTarget -eq "container-app")
 $isFlexConsumption = ($deployTarget -eq "flex-consumption")
+
+# FC1 SKU implies flex-consumption target; flex-consumption target implies FC1 SKU
+if ($azPlanSku -eq "FC1" -and $deployTarget -eq "azure-functions") {
+    $deployTarget = "flex-consumption"
+    $isFlexConsumption = $true
+}
+if ($isFlexConsumption) { $azPlanSku = "FC1" }
 
 # Auto-derive resource names (user can override via .env)
 $azResourceGroup   = Get-EnvValue $envVars "AZURE_RESOURCE_GROUP"   "rg-veeva-connector"
@@ -213,7 +220,7 @@ if ($isContainerApp) {
     Write-Info "Container CPU/Mem:   $containerCpu / $containerMemory"
 } elseif ($isFlexConsumption) {
     Write-Info "Function App:        $azFuncApp"
-    Write-Info "Plan:                Flex Consumption (serverless)"
+    Write-Info "Plan SKU:            FC1 (Flex Consumption — serverless)"
 } else {
     Write-Info "Function App:        $azFuncApp"
     Write-Info "Plan SKU:            $azPlanSku"

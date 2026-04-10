@@ -448,7 +448,8 @@ function getWizardHTML() {
         <div class="field" id="skuField">
           <label>App Service Plan SKU</label>
           <select id="f_AZURE_PLAN_SKU">
-            <option value="EP1">EP1 — Premium Elastic (1 vCPU, 3.5 GB) — Recommended</option>
+            <option value="FC1">FC1 — Flex Consumption (serverless, pay-per-use)</option>
+            <option value="EP1">EP1 — Premium Elastic (1 vCPU, 3.5 GB)</option>
             <option value="EP2">EP2 — Premium Elastic (2 vCPU, 7 GB)</option>
             <option value="EP3">EP3 — Premium Elastic (4 vCPU, 14 GB)</option>
             <option value="P1v3">P1v3 — Dedicated (2 vCPU, 8 GB)</option>
@@ -758,8 +759,17 @@ function toggleDeployTarget() {
   const target = document.getElementById('f_DEPLOY_TARGET').value;
   const isACA = target === 'container-app';
   const isFlex = target === 'flex-consumption';
-  document.getElementById('skuField').style.display = (isACA || isFlex) ? 'none' : '';
+  const skuField = document.getElementById('skuField');
+  const skuSelect = document.getElementById('f_AZURE_PLAN_SKU');
+  skuField.style.display = isACA ? 'none' : '';
   document.getElementById('containerFields').style.display = isACA ? '' : 'none';
+  if (isFlex) {
+    skuSelect.value = 'FC1';
+    skuSelect.disabled = true;
+  } else {
+    skuSelect.disabled = false;
+    if (skuSelect.value === 'FC1') skuSelect.value = 'EP1';
+  }
 }
 
 function collectForm() {
@@ -829,8 +839,8 @@ function buildSummary() {
   if (isACA) {
     displayOrder.push(['Container Registry', formData.AZURE_CONTAINER_REGISTRY || '(auto-derived)']);
     displayOrder.push(['Container CPU/Memory', (formData.CONTAINER_CPU || '1.0') + ' vCPU / ' + (formData.CONTAINER_MEMORY || '2.0Gi')]);
-  } else if (!isFlex) {
-    displayOrder.push(['Plan SKU', formData.AZURE_PLAN_SKU || 'EP1']);
+  } else {
+    displayOrder.push(['Plan SKU', formData.AZURE_PLAN_SKU || (isFlex ? 'FC1' : 'EP1')]);
   }
   displayOrder.push(
     ['Graph API Version', formData.GRAPH_API_VERSION || 'v1.0'],
