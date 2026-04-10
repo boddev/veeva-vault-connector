@@ -316,8 +316,8 @@ if ($azSubId -ne "") {
     Write-Ok "Active subscription: $($account.name)"
 }
 
-# Capture tenant ID from login if not provided (single-tenant only)
-if ($azTenantId -eq "" -and -not $isCrossTenant) {
+# Capture tenant ID from login only if not explicitly provided
+if ($azTenantId -eq "") {
     $azTenantId = $account.tenantId
     Write-Info "Using tenant ID from login: $azTenantId"
 }
