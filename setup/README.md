@@ -65,7 +65,7 @@ At minimum, fill in these **required** values:
 | `SECRET_VEEVA_PASSWORD` | Vault API user password |
 
 All other values have sensible defaults. To use an **existing Entra ID app registration**, also set:
-- `AZURE_TENANT_ID`
+- `MICROSOFT_TENANT_ID`
 - `AZURE_CLIENT_ID`
 - `SECRET_AZURE_CLIENT_SECRET`
 

@@ -412,7 +412,7 @@ export class GraphConnectorClient {
   } {
     if (!this.config.azureTenantId) {
       throw new Error(
-        "AZURE_TENANT_ID is required to generate a default Graph ACL"
+        "MICROSOFT_TENANT_ID is required to generate a default Graph ACL"
       );
     }
 

@@ -80,7 +80,7 @@ export function loadConfig(): ConnectorConfig {
     crawlStateTable: process.env.CRAWL_STATE_TABLE || `VeevaConnectorCrawlState${capitalize(appValue)}`,
     azureClientId: requireEnv("AZURE_CLIENT_ID"),
     azureClientSecret: requireEnv("SECRET_AZURE_CLIENT_SECRET"),
-    azureTenantId: requireEnv("AZURE_TENANT_ID"),
+    azureTenantId: requireEnv("MICROSOFT_TENANT_ID"),
   };
 }
 

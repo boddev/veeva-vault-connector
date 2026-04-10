@@ -193,7 +193,7 @@ $vaultPassword = Require-EnvValue $envVars "SECRET_VEEVA_PASSWORD" "Enter Veeva 
 $veevaApiVer   = Get-EnvValue $envVars "VEEVA_API_VERSION" "v25.3"
 
 # Entra ID (may be empty = auto-create)
-$azTenantId     = Get-EnvValue $envVars "AZURE_TENANT_ID" ""
+$azTenantId     = Get-EnvValue $envVars "MICROSOFT_TENANT_ID" ""
 $azClientId     = Get-EnvValue $envVars "AZURE_CLIENT_ID" ""
 $azClientSecret = Get-EnvValue $envVars "SECRET_AZURE_CLIENT_SECRET" ""
 $entraAutoCreate = ($azClientId -eq "")
@@ -291,7 +291,7 @@ if ($isCrossTenant) {
         $entraAutoCreate = $false
     }
     if ($azTenantId -eq "") {
-        $azTenantId = Require-EnvValue $envVars "AZURE_TENANT_ID" "Enter your M365 tenant ID (where the app registration lives)"
+        $azTenantId = Require-EnvValue $envVars "MICROSOFT_TENANT_ID" "Enter your M365 tenant ID (where the app registration lives)"
     }
 
     Write-Info "Logging into Azure hosting tenant: $azHostingTenantId"
@@ -601,7 +601,7 @@ if ($entraAutoCreate) {
         Write-Info "Cross-tenant mode: app registration is in M365 tenant $azTenantId"
     }
     if ($azTenantId -eq "") {
-        $azTenantId = Require-EnvValue $envVars "AZURE_TENANT_ID" "Enter your Entra ID tenant ID"
+        $azTenantId = Require-EnvValue $envVars "MICROSOFT_TENANT_ID" "Enter your Entra ID tenant ID"
     }
     if ($azClientSecret -eq "") {
         $azClientSecret = Require-EnvValue $envVars "SECRET_AZURE_CLIENT_SECRET" "Enter the Entra ID client secret"
@@ -686,7 +686,7 @@ $appSettings = @(
     "VEEVA_API_VERSION=$veevaApiVer",
     "AZURE_CLIENT_ID=$azClientId",
     "SECRET_AZURE_CLIENT_SECRET=$secretClientRef",
-    "AZURE_TENANT_ID=$azTenantId",
+    "MICROSOFT_TENANT_ID=$azTenantId",
     "VAULT_APPLICATION=$vaultApp",
     "GRAPH_API_VERSION=$graphApiVer",
     "FULL_CRAWL_DAYS=$fullCrawlDays",

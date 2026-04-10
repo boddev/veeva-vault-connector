@@ -15,7 +15,7 @@ describe("loadConfig", () => {
       SECRET_VEEVA_PASSWORD: "password",
       AZURE_CLIENT_ID: "client-id",
       SECRET_AZURE_CLIENT_SECRET: "client-secret",
-      AZURE_TENANT_ID: "tenant-id",
+      MICROSOFT_TENANT_ID: "tenant-id",
     };
     delete process.env.CRAWL_BATCH_SIZE;
     delete process.env.GRAPH_API_VERSION;
@@ -25,9 +25,9 @@ describe("loadConfig", () => {
     process.env = originalEnv;
   });
 
-  test("requires AZURE_TENANT_ID", () => {
-    delete process.env.AZURE_TENANT_ID;
-    expect(() => loadConfig()).toThrow("AZURE_TENANT_ID");
+  test("requires MICROSOFT_TENANT_ID", () => {
+    delete process.env.MICROSOFT_TENANT_ID;
+    expect(() => loadConfig()).toThrow("MICROSOFT_TENANT_ID");
   });
 
   test("validates CRAWL_BATCH_SIZE", () => {

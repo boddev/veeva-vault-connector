@@ -362,7 +362,7 @@ Create a `local.settings.json` file in the project root:
 
     "AZURE_CLIENT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
     "SECRET_AZURE_CLIENT_SECRET": "your-client-secret",
-    "AZURE_TENANT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "MICROSOFT_TENANT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
 
     "VAULT_APPLICATION": "promomats",
     "GRAPH_API_VERSION": "v1.0",
@@ -388,7 +388,7 @@ az functionapp config appsettings set \
     VEEVA_USERNAME="api-copilot-connector@yourdomain.com" \
     VAULT_APPLICATION="promomats" \
     GRAPH_API_VERSION="v1.0" \
-    AZURE_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+    MICROSOFT_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
     AZURE_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
     FULL_CRAWL_DAYS="0,6" \
     PROGRESS_BATCH_SIZE="500"
@@ -628,7 +628,7 @@ In some organizations, the Azure subscription used for hosting infrastructure is
 - **Tenant A** (Hosting): Azure subscription where the Function App runs
 - **Tenant B** (M365): The Microsoft 365 tenant where users search via Copilot
 
-The connector fully supports this scenario — no code changes are required. The `ClientSecretCredential` authenticates to whichever tenant you specify in `AZURE_TENANT_ID`.
+The connector fully supports this scenario — no code changes are required. The `ClientSecretCredential` authenticates to whichever tenant you specify in `MICROSOFT_TENANT_ID`.
 
 ### How It Works
 
@@ -661,7 +661,7 @@ In your `.env` file:
 
 ```bash
 # Tenant B — your M365 tenant (where Graph connections and search results live)
-AZURE_TENANT_ID=<tenant-b-id>
+MICROSOFT_TENANT_ID=<tenant-b-id>
 AZURE_CLIENT_ID=<app-reg-client-id-from-tenant-b>
 SECRET_AZURE_CLIENT_SECRET=<app-reg-secret-from-tenant-b>
 
@@ -684,7 +684,7 @@ The guided setup script (`setup/install.bat`) handles cross-tenant automatically
 - **App registration must be pre-created** in Tenant B. The setup script cannot create apps across tenants.
 - **Admin consent** must be granted in Tenant B before the connector can access the Graph API.
 - **Key Vault** (if enabled) is created in Tenant A. The managed identity used for Key Vault access is separate from the Graph API service principal.
-- **ACLs** use `AZURE_TENANT_ID` (Tenant B) for the `everyoneExceptGuests` access control — ensuring only Tenant B users can see search results.
+- **ACLs** use `MICROSOFT_TENANT_ID` (Tenant B) for the `everyoneExceptGuests` access control — ensuring only Tenant B users can see search results.
 
 ---
 
@@ -947,7 +947,7 @@ Set up Application Insights alerts for:
 | `SECRET_VEEVA_PASSWORD` | Vault API user password | (stored in Key Vault) |
 | `AZURE_CLIENT_ID` | Entra ID app registration client ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | `SECRET_AZURE_CLIENT_SECRET` | Entra ID client secret | (stored in Key Vault) |
-| `AZURE_TENANT_ID` | Entra ID tenant ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `MICROSOFT_TENANT_ID` | Entra ID tenant ID | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 
 ### Optional Variables
 
