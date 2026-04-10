@@ -515,18 +515,24 @@ if ($azAppInsights -ne "" -and -not $isFlexConsumption) {
 Write-Step "4/10" "Configuring Entra ID Application"
 
 if ($entraAutoCreate) {
-    # In cross-tenant mode, switch to the M365 tenant for app creation
-    if ($isCrossTenant) {
-        Write-Info "Switching to M365 tenant ($azTenantId) for app registration..."
-        Write-Info "You will be prompted to authenticate to your M365 tenant..."
-        Invoke-AzCmd -Arguments @("login", "--tenant", $azTenantId, "--allow-no-subscriptions")
-        # Verify we're in the correct tenant
-        $adAccount = Invoke-AzJson -Arguments @("account", "show")
-        if ($adAccount.tenantId -ne $azTenantId) {
-            Write-Warn "WARNING: Current tenant ($($adAccount.tenantId)) does not match M365 tenant ($azTenantId)"
-            Write-Warn "App registration may be created in the wrong tenant."
+    # Ensure we're logged into the correct tenant for app registration
+    # This applies in cross-tenant mode AND when MICROSOFT_TENANT_ID differs from current session
+    if ($azTenantId -ne "") {
+        $currentAccount = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
+        $currentTenant = if ($null -ne $currentAccount) { $currentAccount.tenantId } else { "" }
+        if ($currentTenant -ne $azTenantId) {
+            Write-Info "Current session is in tenant $currentTenant, but app registration belongs in M365 tenant $azTenantId"
+            Write-Info "Switching to M365 tenant for app registration..."
+            Invoke-AzCmd -Arguments @("login", "--tenant", $azTenantId, "--allow-no-subscriptions")
+            $currentAccount = Invoke-AzJson -Arguments @("account", "show")
+            if ($currentAccount.tenantId -ne $azTenantId) {
+                Write-Warn "WARNING: Could not switch to M365 tenant ($azTenantId). Current tenant: $($currentAccount.tenantId)"
+                Write-Warn "App registration may be created in the wrong tenant."
+            } else {
+                Write-Ok "Authenticated to M365 tenant: $azTenantId"
+            }
         } else {
-            Write-Ok "Authenticated to M365 tenant: $azTenantId"
+            Write-Ok "Already in M365 tenant: $azTenantId"
         }
     }
 
@@ -606,7 +612,7 @@ if ($entraAutoCreate) {
         Write-Ok "Admin consent granted for all permissions"
     }
 
-    # In cross-tenant mode, switch back to hosting tenant for infrastructure
+    # Switch back to hosting tenant if we changed tenants
     if ($isCrossTenant) {
         Write-Info "Switching back to hosting tenant ($azHostingTenantId) for infrastructure..."
         Invoke-AzCmd -Arguments @("login", "--tenant", $azHostingTenantId)
@@ -614,6 +620,12 @@ if ($entraAutoCreate) {
             Invoke-AzCmd -Arguments @("account", "set", "--subscription", $azSubId)
         }
         Write-Ok "Back in hosting tenant"
+    } elseif ($azTenantId -ne "") {
+        # Single-tenant but we may have switched — restore subscription context
+        $postAccount = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
+        if ($null -ne $postAccount -and $azSubId -ne "" -and $postAccount.id -ne $azSubId) {
+            Invoke-AzCmd -Arguments @("account", "set", "--subscription", $azSubId)
+        }
     }
 
 } else {
