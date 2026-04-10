@@ -650,10 +650,9 @@ The connector fully supports this scenario — no code changes are required. The
 
 ### Prerequisites
 
-1. **Tenant B**: Create the Entra ID app registration manually (see [Step 2](#step-2-register-the-entra-id-application))
-2. **Tenant B**: Grant the app the required Graph API permissions and admin consent
-3. **Tenant A**: Have an Azure subscription with sufficient permissions to create resources
-4. Record the **Client ID**, **Client Secret**, and **Tenant ID** from the Tenant B app registration
+1. **Tenant A**: Have an Azure subscription with sufficient permissions to create resources
+2. **Tenant B**: Have a user account with Cloud Application Admin or Global Admin role (for app registration auto-creation), OR a pre-created app registration
+3. Know both **Tenant IDs** — Tenant A (hosting) and Tenant B (M365)
 
 ### Configuration
 
@@ -662,8 +661,11 @@ In your `.env` file:
 ```bash
 # Tenant B — your M365 tenant (where Graph connections and search results live)
 MICROSOFT_TENANT_ID=<tenant-b-id>
-AZURE_CLIENT_ID=<app-reg-client-id-from-tenant-b>
-SECRET_AZURE_CLIENT_SECRET=<app-reg-secret-from-tenant-b>
+
+# Leave blank to auto-create the app registration in the M365 tenant,
+# or provide existing app registration details:
+AZURE_CLIENT_ID=
+SECRET_AZURE_CLIENT_SECRET=
 
 # Tenant A — your Azure hosting tenant (where the Function App runs)
 AZURE_HOSTING_TENANT_ID=<tenant-a-id>
@@ -675,14 +677,15 @@ AZURE_SUBSCRIPTION_ID=<subscription-in-tenant-a>
 The guided setup script (`setup/install.bat`) handles cross-tenant automatically:
 
 1. Detects `AZURE_HOSTING_TENANT_ID` is set
-2. Validates that `AZURE_CLIENT_ID` and `SECRET_AZURE_CLIENT_SECRET` are provided (app auto-creation is disabled in cross-tenant mode — the app must exist in Tenant B)
-3. Logs you into **Tenant A** for infrastructure deployment
+2. If `AZURE_CLIENT_ID` is blank, logs you into **Tenant B** (M365) to auto-create the app registration, secret, permissions, and admin consent
+3. Switches to **Tenant A** (hosting) for infrastructure deployment
 4. Configures the Function App with **Tenant B** credentials for Graph API access
+
+> **Note:** You will be prompted to log in twice — once for the M365 tenant (app registration) and once for the hosting tenant (infrastructure). These can be different accounts.
 
 ### Important Notes
 
-- **App registration must be pre-created** in Tenant B. The setup script cannot create apps across tenants.
-- **Admin consent** must be granted in Tenant B before the connector can access the Graph API.
+- **App registration auto-creation** works across tenants — the script logs into each tenant as needed.
 - **Key Vault** (if enabled) is created in Tenant A. The managed identity used for Key Vault access is separate from the Graph API service principal.
 - **ACLs** use `MICROSOFT_TENANT_ID` (Tenant B) for the `everyoneExceptGuests` access control — ensuring only Tenant B users can see search results.
 

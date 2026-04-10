@@ -280,21 +280,12 @@ Write-Ok "Node.js version $nodeVer meets minimum (20+)"
 Write-Step "2/10" "Azure Authentication"
 
 if ($isCrossTenant) {
-    # Cross-tenant: validate that app registration details are provided
-    if ($entraAutoCreate) {
-        Write-Warn "Cross-tenant deployment detected (AZURE_HOSTING_TENANT_ID is set)."
-        Write-Warn "You must pre-create the Entra ID app registration in your M365 tenant"
-        Write-Warn "and provide AZURE_CLIENT_ID and SECRET_AZURE_CLIENT_SECRET in .env."
-        Write-Host ""
-        $azClientId = Require-EnvValue $envVars "AZURE_CLIENT_ID" "Enter the Client ID from your M365 tenant app registration"
-        $azClientSecret = Require-EnvValue $envVars "SECRET_AZURE_CLIENT_SECRET" "Enter the Client Secret from your M365 tenant app registration"
-        $entraAutoCreate = $false
-    }
     if ($azTenantId -eq "") {
         $azTenantId = Require-EnvValue $envVars "MICROSOFT_TENANT_ID" "Enter your M365 tenant ID (where the app registration lives)"
     }
 
-    Write-Info "Logging into Azure hosting tenant: $azHostingTenantId"
+    # Log into hosting tenant for infrastructure deployment
+    Write-Info "Cross-tenant mode: logging into hosting tenant ($azHostingTenantId)..."
     $account = Invoke-AzJson -Arguments @("account", "show") -AllowFailure
     $needLogin = ($null -eq $account -or $LASTEXITCODE -ne 0 -or $account.tenantId -ne $azHostingTenantId)
     if ($needLogin) {
@@ -524,6 +515,12 @@ if ($azAppInsights -ne "" -and -not $isFlexConsumption) {
 Write-Step "4/10" "Configuring Entra ID Application"
 
 if ($entraAutoCreate) {
+    # In cross-tenant mode, switch to the M365 tenant for app creation
+    if ($isCrossTenant) {
+        Write-Info "Switching to M365 tenant ($azTenantId) for app registration..."
+        Invoke-AzCmd -Arguments @("login", "--tenant", $azTenantId)
+    }
+
     Write-Info "Creating Entra ID app registration: Veeva Vault Copilot Connector"
 
     # Create app registration
@@ -593,6 +590,16 @@ if ($entraAutoCreate) {
         Read-Host "  Press Enter after granting consent to continue"
     } else {
         Write-Ok "Admin consent granted for all permissions"
+    }
+
+    # In cross-tenant mode, switch back to hosting tenant for infrastructure
+    if ($isCrossTenant) {
+        Write-Info "Switching back to hosting tenant ($azHostingTenantId) for infrastructure..."
+        Invoke-AzCmd -Arguments @("login", "--tenant", $azHostingTenantId)
+        if ($azSubId -ne "") {
+            Invoke-AzCmd -Arguments @("account", "set", "--subscription", $azSubId)
+        }
+        Write-Ok "Back in hosting tenant"
     }
 
 } else {

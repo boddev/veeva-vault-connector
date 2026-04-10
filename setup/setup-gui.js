@@ -534,7 +534,7 @@ function getWizardHTML() {
       <div class="field">
         <label>Hosting Tenant ID (Cross-Tenant — Optional)</label>
         <input id="f_AZURE_HOSTING_TENANT_ID" placeholder="Leave blank for single-tenant deployment">
-        <div class="hint">Set this only if your Azure subscription is in a different tenant than your M365 tenant above. The app registration must be pre-created in the M365 tenant.</div>
+        <div class="hint">Set this only if your Azure subscription is in a different tenant than your M365 tenant above. The script will log into both tenants automatically.</div>
       </div>
     </div>
 
