@@ -50,7 +50,25 @@ function Write-Err { param([string]$Msg) Write-Host "  ❌ $Msg" -ForegroundColo
 
 function Invoke-AzCmd {
     param([string[]]$Arguments, [switch]$AllowFailure)
-    $result = & az @Arguments 2>&1
+    # On Windows, az.cmd is processed by cmd.exe which misinterprets special
+    # characters like @, (), ;, &, |, ^, <>, ! in argument values.
+    # Build an explicit command line with proper quoting for cmd.exe.
+    $azExe = (Get-Command az -ErrorAction SilentlyContinue).Source
+    $isBatch = $azExe -and ($azExe -match '\.(cmd|bat)$')
+    if ($isBatch) {
+        $parts = @()
+        foreach ($arg in $Arguments) {
+            if ($arg -match '[()@;^&|<>!% ]') {
+                $parts += "`"$arg`""
+            } else {
+                $parts += $arg
+            }
+        }
+        $cmdLine = "`"$azExe`" " + ($parts -join " ")
+        $result = cmd /c $cmdLine 2>&1
+    } else {
+        $result = & az @Arguments 2>&1
+    }
     if ($LASTEXITCODE -ne 0 -and -not $AllowFailure) {
         $errorMsg = ($result | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "`n"
         if (-not $errorMsg) { $errorMsg = $result -join "`n" }
@@ -67,6 +85,65 @@ function Invoke-AzJson {
         try { return $raw | ConvertFrom-Json } catch { return $raw }
     }
     return $null
+}
+
+# Set Azure Function App settings via ARM REST API to avoid cmd.exe escaping issues.
+# The PUT replaces all settings so we merge with existing ones first.
+function Set-AppSettings {
+    param(
+        [string]$FunctionApp,
+        [string]$ResourceGroup,
+        [hashtable]$Settings
+    )
+    $tokenInfo = Invoke-AzJson -Arguments @("account", "get-access-token", "--resource", "https://management.azure.com")
+    $accountInfo = Invoke-AzJson -Arguments @("account", "show")
+    $subId = $accountInfo.id
+    $headers = @{
+        "Authorization" = "Bearer $($tokenInfo.accessToken)"
+        "Content-Type"  = "application/json"
+    }
+
+    $encRg   = [Uri]::EscapeDataString($ResourceGroup)
+    $encApp  = [Uri]::EscapeDataString($FunctionApp)
+    $baseUrl = "https://management.azure.com/subscriptions/$subId/resourceGroups/$encRg/providers/Microsoft.Web/sites/$encApp"
+
+    # List existing settings so we merge rather than overwrite.
+    # IMPORTANT: if this fails, abort — proceeding with empty merge would wipe all settings.
+    $listUrl = "$baseUrl/config/appsettings/list?api-version=2023-12-01"
+    $merged = @{}
+    try {
+        $existing = Invoke-RestMethod -Uri $listUrl -Method Post -Headers $headers
+        if ($existing.properties) {
+            foreach ($prop in $existing.properties.PSObject.Properties) {
+                $merged[$prop.Name] = $prop.Value
+            }
+        }
+    } catch {
+        throw "Failed to read existing app settings (aborting to avoid data loss): $($_.Exception.Message)"
+    }
+
+    foreach ($key in $Settings.Keys) { $merged[$key] = $Settings[$key] }
+
+    $putUrl = "$baseUrl/config/appsettings?api-version=2023-12-01"
+    $body = @{ properties = $merged } | ConvertTo-Json -Depth 3
+    Invoke-RestMethod -Uri $putUrl -Method Put -Headers $headers -Body $body | Out-Null
+}
+
+# Store a secret in Key Vault via temp file to avoid passing the value on the command line.
+function Set-KeyVaultSecret {
+    param([string]$VaultName, [string]$SecretName, [string]$SecretValue)
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText($tempFile, $SecretValue)
+        Invoke-AzCmd -Arguments @(
+            "keyvault", "secret", "set",
+            "--vault-name", $VaultName,
+            "--name", $SecretName,
+            "--file", $tempFile
+        ) | Out-Null
+    } finally {
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-Command { param([string]$Name) return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue) }
@@ -501,12 +578,10 @@ if ($azAppInsights -ne "" -and -not $isFlexConsumption) {
     }
 
     # Link to Function App
-    Invoke-AzCmd -Arguments @(
-        "functionapp", "config", "appsettings", "set",
-        "--name", $azFuncApp,
-        "--resource-group", $azResourceGroup,
-        "--settings", "APPLICATIONINSIGHTS_CONNECTION_STRING=$aiConnStr"
-    ) | Out-Null
+    Write-Info "Linking Application Insights to Function App..."
+    Set-AppSettings -FunctionApp $azFuncApp -ResourceGroup $azResourceGroup -Settings @{
+        "APPLICATIONINSIGHTS_CONNECTION_STRING" = $aiConnStr
+    }
     Write-Ok "Linked Application Insights to Function App"
 }
 
@@ -725,20 +800,10 @@ if ($useKeyVault) {
         Write-Ok "Key Vault access granted"
     }
 
-    # Store secrets
+    # Store secrets via temp files (avoids special chars on command line)
     Write-Info "Storing secrets in Key Vault..."
-    Invoke-AzCmd -Arguments @(
-        "keyvault", "secret", "set",
-        "--vault-name", $azKeyVault,
-        "--name", "VeevaPassword",
-        "--value", $vaultPassword
-    ) | Out-Null
-    Invoke-AzCmd -Arguments @(
-        "keyvault", "secret", "set",
-        "--vault-name", $azKeyVault,
-        "--name", "AzureClientSecret",
-        "--value", $azClientSecret
-    ) | Out-Null
+    Set-KeyVaultSecret -VaultName $azKeyVault -SecretName "VeevaPassword" -SecretValue $vaultPassword
+    Set-KeyVaultSecret -VaultName $azKeyVault -SecretName "AzureClientSecret" -SecretValue $azClientSecret
     Write-Ok "Secrets stored in Key Vault"
 
     $secretVeevaRef = "@Microsoft.KeyVault(VaultName=$azKeyVault;SecretName=VeevaPassword)"
@@ -753,36 +818,29 @@ if ($useKeyVault) {
 
 Write-Step "6/10" "Configuring Function App Settings"
 
-$appSettings = @(
-    "VEEVA_VAULT_DNS=$vaultDns",
-    "VEEVA_USERNAME=$vaultUser",
-    "SECRET_VEEVA_PASSWORD=$secretVeevaRef",
-    "VEEVA_API_VERSION=$veevaApiVer",
-    "AZURE_CLIENT_ID=$azClientId",
-    "SECRET_AZURE_CLIENT_SECRET=$secretClientRef",
-    "MICROSOFT_TENANT_ID=$azTenantId",
-    "VAULT_APPLICATION=$vaultApp",
-    "GRAPH_API_VERSION=$graphApiVer",
-    "FULL_CRAWL_DAYS=$fullCrawlDays",
-    "CRAWL_BATCH_SIZE=$crawlBatchSize",
-    "PROGRESS_BATCH_SIZE=$progressBatch",
-    "AUTO_DISCOVER_OBJECTS=$autoDiscover"
-)
+$appSettingsHash = @{
+    "VEEVA_VAULT_DNS"            = $vaultDns
+    "VEEVA_USERNAME"             = $vaultUser
+    "SECRET_VEEVA_PASSWORD"      = $secretVeevaRef
+    "VEEVA_API_VERSION"          = $veevaApiVer
+    "AZURE_CLIENT_ID"            = $azClientId
+    "SECRET_AZURE_CLIENT_SECRET" = $secretClientRef
+    "MICROSOFT_TENANT_ID"        = $azTenantId
+    "VAULT_APPLICATION"          = $vaultApp
+    "GRAPH_API_VERSION"          = $graphApiVer
+    "FULL_CRAWL_DAYS"            = $fullCrawlDays
+    "CRAWL_BATCH_SIZE"           = $crawlBatchSize
+    "PROGRESS_BATCH_SIZE"        = $progressBatch
+    "AUTO_DISCOVER_OBJECTS"      = $autoDiscover
+}
 
 # Add optional overrides
-if ($connectorId -ne "")   { $appSettings += "CONNECTOR_ID=$connectorId" }
-if ($connectorName -ne "") { $appSettings += "CONNECTOR_NAME=$connectorName" }
-if ($connectorDesc -ne "") { $appSettings += "CONNECTOR_DESCRIPTION=$connectorDesc" }
+if ($connectorId -ne "")   { $appSettingsHash["CONNECTOR_ID"]          = $connectorId }
+if ($connectorName -ne "") { $appSettingsHash["CONNECTOR_NAME"]        = $connectorName }
+if ($connectorDesc -ne "") { $appSettingsHash["CONNECTOR_DESCRIPTION"] = $connectorDesc }
 
-Write-Info "Setting $($appSettings.Count) application settings..."
-$settingsArgs = @(
-    "functionapp", "config", "appsettings", "set",
-    "--name", $azFuncApp,
-    "--resource-group", $azResourceGroup,
-    "--settings"
-) + $appSettings
-
-Invoke-AzCmd -Arguments $settingsArgs | Out-Null
+Write-Info "Setting $($appSettingsHash.Count) application settings via ARM API..."
+Set-AppSettings -FunctionApp $azFuncApp -ResourceGroup $azResourceGroup -Settings $appSettingsHash
 Write-Ok "Application settings configured"
 
 # ─── Step 7: Veeva Connectivity Check ───────────────────────────────────────
@@ -861,26 +919,46 @@ if ($isContainerApp) {
     ) | Out-Null
     Write-Ok "Container image built and pushed to ACR"
 
-    # Configure the function app to use the ACR image
-    Write-Info "Configuring Function App to use container image..."
-    $acrCreds = Invoke-AzJson -Arguments @(
-        "acr", "credential", "show",
+    # Configure the function app to use the ACR image via managed identity (avoids
+    # leaking passwords on the command line and sidesteps cmd.exe escaping issues).
+    Write-Info "Configuring managed identity for ACR pull..."
+    $identity = Invoke-AzJson -Arguments @(
+        "functionapp", "identity", "assign",
+        "--name", $azFuncApp,
+        "--resource-group", $azResourceGroup
+    )
+    $miPrincipalId = $identity.principalId
+
+    $acrInfo = Invoke-AzJson -Arguments @(
+        "acr", "show",
         "--name", $azContainerRegistry,
         "--resource-group", $azResourceGroup
     )
-    $acrUsername = $acrCreds.username
-    $acrPassword = $acrCreds.passwords[0].value
+    $acrId = $acrInfo.id
 
+    Invoke-AzCmd -Arguments @(
+        "role", "assignment", "create",
+        "--role", "AcrPull",
+        "--assignee-object-id", $miPrincipalId,
+        "--assignee-principal-type", "ServicePrincipal",
+        "--scope", $acrId
+    ) -AllowFailure | Out-Null
+    Write-Ok "AcrPull role assigned to Function App managed identity"
+
+    Write-Info "Configuring Function App to use container image..."
     Invoke-AzCmd -Arguments @(
         "functionapp", "config", "container", "set",
         "--name", $azFuncApp,
         "--resource-group", $azResourceGroup,
         "--image", $imageName,
-        "--registry-server", $acrLoginServer,
-        "--registry-username", $acrUsername,
-        "--registry-password", $acrPassword
+        "--registry-server", $acrLoginServer
     ) | Out-Null
-    Write-Ok "Function App configured with container image"
+
+    # Enable managed identity-based ACR pull via ARM REST
+    Set-AppSettings -FunctionApp $azFuncApp -ResourceGroup $azResourceGroup -Settings @{
+        "DOCKER_REGISTRY_SERVER_URL" = "https://$acrLoginServer"
+    }
+    Write-Ok "Function App configured with container image (managed identity pull)"
 } else {
     # Deploy via Azure Functions Core Tools
     $deployOutput = & func azure functionapp publish $azFuncApp 2>&1
