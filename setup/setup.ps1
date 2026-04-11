@@ -571,7 +571,7 @@ if ($entraAutoCreate) {
     $graphAppId = "00000003-0000-0000-c000-000000000000"  # Microsoft Graph
     $permissions = @(
         "f431331c-49a6-499f-be1c-62af19c34a9d",  # ExternalConnection.ReadWrite.OwnedBy
-        "8116ae0f-55c2-452d-9571-d9b8f16f0734",  # ExternalItem.ReadWrite.OwnedBy
+        "8116ae0f-55c2-452d-9944-d18420f5b2c8",  # ExternalItem.ReadWrite.OwnedBy
         "1914711b-a1cb-4793-b019-c2ce0ed21b8c",  # ExternalConnection.Read.All
         "7ab1d382-f21e-4acd-a863-ba3e13f7da61",  # Directory.Read.All
         "5b567255-7703-4780-807c-7be8301ae99b",  # Group.Read.All
@@ -674,15 +674,56 @@ if ($useKeyVault) {
     Write-Info "Waiting for identity propagation..."
     Start-Sleep -Seconds 15
 
-    # Grant Key Vault access
-    Write-Info "Granting Key Vault secret access to Function App..."
-    Invoke-AzCmd -Arguments @(
-        "keyvault", "set-policy",
-        "--name", $azKeyVault,
-        "--object-id", $principalId,
-        "--secret-permissions", "get", "list"
-    ) | Out-Null
-    Write-Ok "Key Vault access granted"
+    # Detect if RBAC authorization is enabled on the vault
+    $vaultInfo = Invoke-AzJson -Arguments @("keyvault", "show", "--name", $azKeyVault) -AllowFailure
+    $rbacEnabled = $false
+    if ($null -ne $vaultInfo -and $vaultInfo.properties -and $vaultInfo.properties.enableRbacAuthorization -eq $true) {
+        $rbacEnabled = $true
+    }
+
+    if ($rbacEnabled) {
+        Write-Info "Key Vault uses RBAC authorization — assigning roles..."
+        $vaultId = $vaultInfo.id
+
+        # Grant the Function App managed identity "Key Vault Secrets User" role
+        Write-Info "Granting Key Vault Secrets User role to Function App..."
+        Invoke-AzCmd -Arguments @(
+            "role", "assignment", "create",
+            "--role", "Key Vault Secrets User",
+            "--assignee-object-id", $principalId,
+            "--assignee-principal-type", "ServicePrincipal",
+            "--scope", $vaultId
+        ) -AllowFailure | Out-Null
+        Write-Ok "Key Vault Secrets User role assigned"
+
+        # Grant the current user "Key Vault Secrets Officer" role to store secrets
+        $currentUser = Invoke-AzJson -Arguments @("ad", "signed-in-user", "show") -AllowFailure
+        if ($null -ne $currentUser -and $currentUser.id) {
+            Write-Info "Granting Key Vault Secrets Officer role to deployer..."
+            Invoke-AzCmd -Arguments @(
+                "role", "assignment", "create",
+                "--role", "Key Vault Secrets Officer",
+                "--assignee-object-id", $currentUser.id,
+                "--assignee-principal-type", "User",
+                "--scope", $vaultId
+            ) -AllowFailure | Out-Null
+            Write-Ok "Key Vault Secrets Officer role assigned to deployer"
+        }
+
+        # Wait for RBAC propagation
+        Write-Info "Waiting for RBAC propagation..."
+        Start-Sleep -Seconds 30
+    } else {
+        # Legacy access policy mode
+        Write-Info "Granting Key Vault secret access to Function App..."
+        Invoke-AzCmd -Arguments @(
+            "keyvault", "set-policy",
+            "--name", $azKeyVault,
+            "--object-id", $principalId,
+            "--secret-permissions", "get", "list"
+        ) | Out-Null
+        Write-Ok "Key Vault access granted"
+    }
 
     # Store secrets
     Write-Info "Storing secrets in Key Vault..."
