@@ -128,21 +128,24 @@ async function fullCrawlHandler(
       return { status: 409, jsonBody: { status: "error", message: "A crawl is already running" } };
     }
 
-    // Fire-and-forget: start the crawl in the background and return immediately.
-    // The HTTP gateway timeout (~240s) is shorter than a full crawl, so we cannot
-    // await the result. Progress is tracked via crawl state table and dashboard polling.
-    const engine = new FullCrawlEngine(
-      services.config, services.directData, services.vaultRest,
-      services.graphClient, services.aclMapper, services.stateManager
-    );
-    engine.execute().then((result) => {
-      const status = result.paused ? "paused" : "success";
-      logger.info(`fullCrawl background complete: ${status}, ${result.itemsProcessed} items, ${result.errors} errors`);
-    }).catch((error: unknown) => {
-      logger.error(`fullCrawl background failed: ${error instanceof Error ? error.message : "unknown"}`);
+    // Seed crawl state so the crawlResumeTimer picks it up immediately.
+    // This avoids HTTP gateway timeouts — the full crawl runs via timer, not HTTP.
+    await services.stateManager.updateState({
+      crawlStatus: "paused",
+      currentCrawlType: "full",
+      fullCrawlPhase: 0,
+      fullCrawlResumeIndex: 0,
+      fullCrawlErrors: 0,
+      itemsProcessed: 0,
+      itemsDeleted: 0,
+      lastFullCrawlTime: new Date().toISOString(),
+      crawlStartedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      fullCrawlDataFile: undefined,
     });
 
-    return { status: 202, jsonBody: { status: "started", message: "Full crawl started in background. Monitor progress via the dashboard.", application: services.config.vaultApplication } };
+    logger.info("fullCrawl HTTP: seeded paused state — crawlResumeTimer will start the crawl");
+    return { status: 202, jsonBody: { status: "started", message: "Full crawl queued. The resume timer will start processing within 5 minutes. Monitor progress via the dashboard.", application: services.config.vaultApplication } };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logger.error(`fullCrawl HTTP failed: ${message}`);
