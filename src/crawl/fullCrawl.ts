@@ -185,7 +185,8 @@ export class FullCrawlEngine {
         const resumeIdx = startPhase === PHASE_DOCS ? startIndex : 0;
         await this.reportPhase("Processing documents", itemsProcessed, totalItems);
         const fetchContent = this.config.fullCrawlFetchContent;
-        logger.info(`Processing ${docRecords.length} documents (resume from index ${resumeIdx}, concurrency=${this.config.crawlConcurrency}, fetchContent=${fetchContent})...`);
+        const openAcl = this.config.fullCrawlOpenAcl;
+        logger.info(`Processing ${docRecords.length} documents (resume from index ${resumeIdx}, concurrency=${this.config.crawlConcurrency}, fetchContent=${fetchContent}, openAcl=${openAcl})...`);
 
         const concurrency = this.config.crawlConcurrency;
         let nextIndex = resumeIdx;
@@ -204,12 +205,13 @@ export class FullCrawlEngine {
           const results = await Promise.allSettled(
             batch.map(async (record) => {
               const items = await this.contentProcessor.processDocument(record, { fetchContent });
-              const lifecycle = record.lifecycle__v || "";
-              const acl = await this.aclMapper.mapDocumentAcl(
-                record.doc_id || record.id?.split("_")[0] || "",
-                false,
-                lifecycle || undefined
-              );
+              const acl = openAcl
+                ? undefined // graphClient defaults to tenant-wide grant
+                : await this.aclMapper.mapDocumentAcl(
+                    record.doc_id || record.id?.split("_")[0] || "",
+                    false,
+                    (record.lifecycle__v || "") || undefined
+                  );
               for (const item of items) {
                 await this.graphClient.upsertItem(item.itemId, item.properties, item.content, acl);
               }
@@ -292,7 +294,9 @@ export class FullCrawlEngine {
           const results = await Promise.allSettled(
             batch.map(async ({ record, objectType }) => {
               const item = this.contentProcessor.processVaultObject(record, objectType);
-              const acl = await this.aclMapper.mapObjectAcl(objectType, record.id || "");
+              const acl = this.config.fullCrawlOpenAcl
+                ? undefined
+                : await this.aclMapper.mapObjectAcl(objectType, record.id || "");
               await this.graphClient.upsertItem(item.itemId, item.properties, item.content, acl);
             })
           );

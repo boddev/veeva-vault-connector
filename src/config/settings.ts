@@ -37,6 +37,7 @@ export interface ConnectorConfig {
   crawlTimeBudgetMs: number;      // Max ms per crawl chunk before pausing for timer resume
   crawlConcurrency: number;       // Number of documents to process concurrently (default: 10)
   fullCrawlFetchContent: boolean; // Whether to download document text during full crawl (default: false)
+  fullCrawlOpenAcl: boolean;      // Use tenant-wide grant ACL instead of per-document ACLs (default: false)
 
   // Azure
   storageConnectionString: string;
@@ -82,6 +83,7 @@ export function loadConfig(): ConnectorConfig {
     crawlTimeBudgetMs: parsePositiveIntegerEnv("CRAWL_TIME_BUDGET_MS", 20 * 60 * 1000),
     crawlConcurrency: parsePositiveIntegerEnv("CRAWL_CONCURRENCY", 10),
     fullCrawlFetchContent: process.env.FULL_CRAWL_FETCH_CONTENT === "true",
+    fullCrawlOpenAcl: process.env.FULL_CRAWL_OPEN_ACL === "true",
 
     storageConnectionString: process.env.AzureWebJobsStorage || "UseDevelopmentStorage=true",
     crawlStateTable: process.env.CRAWL_STATE_TABLE || `VeevaConnectorCrawlState${capitalize(appValue)}`,
