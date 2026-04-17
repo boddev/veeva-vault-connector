@@ -121,12 +121,28 @@ async function fullCrawlHandler(
 
   try {
     await services.stateManager.initialize();
+
+    // Check if a crawl is already running
+    const state = await services.stateManager.getState();
+    if (state.crawlStatus === "running") {
+      return { status: 409, jsonBody: { status: "error", message: "A crawl is already running" } };
+    }
+
+    // Fire-and-forget: start the crawl in the background and return immediately.
+    // The HTTP gateway timeout (~240s) is shorter than a full crawl, so we cannot
+    // await the result. Progress is tracked via crawl state table and dashboard polling.
     const engine = new FullCrawlEngine(
       services.config, services.directData, services.vaultRest,
       services.graphClient, services.aclMapper, services.stateManager
     );
-    const result = await engine.execute();
-    return { status: 200, jsonBody: { status: "success", application: services.config.vaultApplication, ...result } };
+    engine.execute().then((result) => {
+      const status = result.paused ? "paused" : "success";
+      logger.info(`fullCrawl background complete: ${status}, ${result.itemsProcessed} items, ${result.errors} errors`);
+    }).catch((error: unknown) => {
+      logger.error(`fullCrawl background failed: ${error instanceof Error ? error.message : "unknown"}`);
+    });
+
+    return { status: 202, jsonBody: { status: "started", message: "Full crawl started in background. Monitor progress via the dashboard.", application: services.config.vaultApplication } };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logger.error(`fullCrawl HTTP failed: ${message}`);
@@ -190,10 +206,21 @@ async function incrementalCrawlHandler(
 
 async function incrementalCrawlTimerHandler(timer: Timer, context: InvocationContext): Promise<void> {
   const services = createServices();
-  logger.info(`incrementalCrawl timer triggered [${services.config.vaultApplication.toUpperCase()}]`);
 
   try {
     await services.stateManager.initialize();
+    const state = await services.stateManager.getState();
+
+    // Skip if a full crawl is running/paused or has never completed
+    if (state.crawlStatus === "running" || state.crawlStatus === "paused") {
+      logger.info("incrementalCrawl timer skipped: a crawl is active");
+      return;
+    }
+    if (!state.lastFullCrawlStopTime) {
+      logger.info("incrementalCrawl timer skipped: no full crawl has completed yet");
+      return;
+    }
+
     const engine = new IncrementalCrawlEngine(
       services.config, services.directData, services.vaultRest,
       services.graphClient, services.aclMapper, services.stateManager
@@ -206,6 +233,52 @@ async function incrementalCrawlTimerHandler(timer: Timer, context: InvocationCon
       return;
     }
     logger.error(`incrementalCrawl timer failed: ${message}`);
+  }
+}
+
+// --- 3b. Crawl Resume Timer ---
+
+async function crawlResumeTimerHandler(timer: Timer, context: InvocationContext): Promise<void> {
+  const services = createServices();
+
+  try {
+    await services.stateManager.initialize();
+    const state = await services.stateManager.getState();
+
+    // Handle stale "running" state — if heartbeat is >30 min old, the function crashed
+    if (state.crawlStatus === "running" && state.lastHeartbeat) {
+      const heartbeatAge = Date.now() - new Date(state.lastHeartbeat).getTime();
+      const STALE_HEARTBEAT_MS = 30 * 60 * 1000; // 30 minutes
+      if (heartbeatAge > STALE_HEARTBEAT_MS) {
+        logger.warn(`crawlResumeTimer: Detected stale running crawl (heartbeat ${Math.round(heartbeatAge / 60000)}m ago). Recovering...`);
+        await services.stateManager.updateState({ crawlStatus: "paused" });
+        // Fall through to resume logic below
+      } else {
+        return; // Crawl is actively running
+      }
+    } else if (state.crawlStatus !== "paused") {
+      return; // Nothing to resume
+    }
+
+    if (state.currentCrawlType === "full") {
+      logger.info(`crawlResumeTimer: Resuming paused full crawl (phase ${state.fullCrawlPhase}, ${state.itemsProcessed} items done)`);
+      const engine = new FullCrawlEngine(
+        services.config, services.directData, services.vaultRest,
+        services.graphClient, services.aclMapper, services.stateManager
+      );
+      const result = await engine.execute();
+      if (result.paused) {
+        logger.info(`crawlResumeTimer: Chunk complete, still paused. ${result.itemsProcessed} items total. Will continue on next tick.`);
+      } else {
+        logger.info(`crawlResumeTimer: Full crawl finished! ${result.itemsProcessed} items total.`);
+      }
+    } else {
+      logger.warn(`crawlResumeTimer: Unknown paused crawl type '${state.currentCrawlType}', resetting to idle`);
+      await services.stateManager.updateState({ crawlStatus: "idle", currentCrawlType: undefined });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown";
+    logger.error(`crawlResumeTimer failed: ${message}`);
   }
 }
 
@@ -224,8 +297,9 @@ async function statusHandler(
       services.graphClient.getConnectionStatus().catch(() => null),
     ]);
 
-    // Calculate progress info when running
-    const progress = crawlState.crawlStatus === "running"
+    // Calculate progress info when running or paused
+    const isActive = crawlState.crawlStatus === "running" || crawlState.crawlStatus === "paused";
+    const progress = isActive
       ? {
           phase: crawlState.currentPhase || "unknown",
           itemsProcessed: crawlState.itemsProcessed || 0,
@@ -320,6 +394,7 @@ function getInlineDashboard(): string {
   .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
   .badge-idle { background: rgba(34,197,94,0.15); color: var(--green); }
   .badge-running { background: rgba(59,130,246,0.15); color: var(--accent); animation: pulse 2s infinite; }
+  .badge-paused { background: rgba(234,179,8,0.15); color: var(--yellow); }
   .badge-failed { background: rgba(239,68,68,0.15); color: var(--red); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
   .progress-bar { width: 100%; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 0.75rem 0; }
@@ -461,7 +536,7 @@ function initScheduleGrid() {
 
 async function fetchStatus() {
   try {
-    const resp = await fetch('/api/status');
+    const resp = await fetch('/api/dashboard/status');
     const data = await resp.json();
 
     // Connector info
@@ -477,16 +552,20 @@ async function fetchStatus() {
     const badge = document.getElementById('statusBadge');
     const type = s.crawlType ? s.crawlType.charAt(0).toUpperCase() + s.crawlType.slice(1) : '';
 
+    const isActive = s.status === 'running' || s.status === 'paused';
+
     badge.textContent = s.status || 'unknown';
     badge.className = 'badge badge-' + (s.status || 'idle');
-    statusText.textContent = s.status === 'running' ? type + ' Crawl' : (s.status || '—').charAt(0).toUpperCase() + (s.status || '—').slice(1);
-    document.getElementById('statusDetail').textContent = s.status === 'running' ? 'Started ' + timeAgo(data.progress?.startedAt) : '';
+    statusText.textContent = isActive ? type + ' Crawl' : (s.status || '—').charAt(0).toUpperCase() + (s.status || '—').slice(1);
+    document.getElementById('statusDetail').textContent = s.status === 'running'
+      ? 'Started ' + timeAgo(data.progress?.startedAt)
+      : s.status === 'paused' ? 'Paused — will resume automatically' : '';
 
     // Heartbeat
     const hbRow = document.getElementById('heartbeatRow');
     const hbDot = document.getElementById('heartbeatDot');
     const hbText = document.getElementById('heartbeatText');
-    if (data.progress && s.status === 'running') {
+    if (data.progress && isActive) {
       hbRow.style.display = 'flex';
       const hbAge = data.progress.lastHeartbeat ? (Date.now() - new Date(data.progress.lastHeartbeat).getTime()) / 1000 : 999;
       hbDot.className = 'heartbeat-dot' + (hbAge < 120 ? '' : hbAge < 600 ? ' stale' : ' dead');
@@ -497,7 +576,7 @@ async function fetchStatus() {
 
     // Progress
     const pCard = document.getElementById('progressCard');
-    if (data.progress && s.status === 'running') {
+    if (data.progress && isActive) {
       pCard.style.display = 'block';
       const p = data.progress;
       document.getElementById('progressPct').textContent = p.percentComplete + '%';
@@ -545,7 +624,9 @@ async function triggerCrawl(endpoint) {
   log.scrollTop = log.scrollHeight;
   try {
     const resp = await fetch('/api/' + endpoint, { method: 'POST' });
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { status: resp.status, body: text || '(empty response)' }; }
     log.textContent += '\\n  ' + JSON.stringify(data, null, 2);
   } catch (e) {
     log.textContent += '\\n  ERROR: ' + e.message;
@@ -579,5 +660,9 @@ app.timer("fullCrawlTimer", { schedule: process.env.FULL_CRAWL_SCHEDULE || "0 0 
 app.http("incrementalCrawl", { methods: ["POST"], authLevel: "function", handler: incrementalCrawlHandler });
 app.timer("incrementalCrawlTimer", { schedule: process.env.INCREMENTAL_CRAWL_SCHEDULE || "0 */15 * * * *", handler: incrementalCrawlTimerHandler });
 
+// Resume timer — checks every 5 minutes for paused crawls and continues them
+app.timer("crawlResumeTimer", { schedule: process.env.CRAWL_RESUME_SCHEDULE || "0 */5 * * * *", handler: crawlResumeTimerHandler });
+
 app.http("status", { methods: ["GET"], authLevel: "function", handler: statusHandler });
-app.http("admin", { methods: ["GET"], authLevel: "anonymous", handler: adminHandler });
+app.http("dashboardStatus", { methods: ["GET"], authLevel: "anonymous", route: "dashboard/status", handler: statusHandler });
+app.http("admin", { methods: ["GET"], authLevel: "anonymous", route: "dashboard", handler: adminHandler });
