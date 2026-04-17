@@ -82,30 +82,32 @@ export class VaultRestClient {
         { maxAttempts: 2 }
       );
 
-      const roles = response.data?.roles || response.data?.data || [];
+      const roles = response.data?.documentRoles || response.data?.roles || response.data?.data || [];
       const principals: VaultPrincipal[] = [];
 
       for (const role of roles) {
-        const roleName = role.role_name || role.name__v || "";
-        const users = role.users__v || role.users || [];
-        const groups = role.groups__v || role.groups || [];
+        const roleName = role.name || role.role_name || role.name__v || "";
+        const users = role.assignedUsers || role.users__v || role.users || [];
+        const groups = role.assignedGroups || role.groups__v || role.groups || [];
 
         for (const user of users) {
+          const isPlainId = typeof user === "number" || typeof user === "string";
           principals.push({
             type: "user",
-            id: String(user.id || user),
-            name: user.name__v || user.user_name__v || "",
-            email: user.user_email__v || "",
-            federatedId: user.federated_id__v || user.user_email__v || "",
+            id: String(isPlainId ? user : (user.id || user)),
+            name: isPlainId ? "" : (user.name__v || user.user_name__v || ""),
+            email: isPlainId ? "" : (user.user_email__v || ""),
+            federatedId: isPlainId ? "" : (user.federated_id__v || user.user_email__v || ""),
             role: roleName,
           });
         }
 
         for (const group of groups) {
+          const isPlainId = typeof group === "number" || typeof group === "string";
           principals.push({
             type: "group",
-            id: String(group.id || group),
-            name: group.name__v || group.group_name__v || "",
+            id: String(isPlainId ? group : (group.id || group)),
+            name: isPlainId ? "" : (group.name__v || group.group_name__v || ""),
             role: roleName,
           });
         }
@@ -134,28 +136,30 @@ export class VaultRestClient {
         { maxAttempts: 1 }
       );
 
-      const roles = response.data?.roles || response.data?.data || [];
+      const roles = response.data?.documentRoles || response.data?.roles || response.data?.data || [];
       const principals: VaultPrincipal[] = [];
 
       for (const role of roles) {
-        const users = role.users__v || role.users || [];
-        const groups = role.groups__v || role.groups || [];
+        const users = role.assignedUsers || role.users__v || role.users || [];
+        const groups = role.assignedGroups || role.groups__v || role.groups || [];
 
         for (const user of users) {
+          const isPlainId = typeof user === "number" || typeof user === "string";
           principals.push({
             type: "user",
-            id: String(user.id || user),
-            name: user.name__v || user.user_name__v || "",
-            email: user.user_email__v || "",
-            federatedId: user.federated_id__v || user.user_email__v || "",
+            id: String(isPlainId ? user : (user.id || user)),
+            name: isPlainId ? "" : (user.name__v || user.user_name__v || ""),
+            email: isPlainId ? "" : (user.user_email__v || ""),
+            federatedId: isPlainId ? "" : (user.federated_id__v || user.user_email__v || ""),
           });
         }
 
         for (const group of groups) {
+          const isPlainId = typeof group === "number" || typeof group === "string";
           principals.push({
             type: "group",
-            id: String(group.id || group),
-            name: group.name__v || group.group_name__v || "",
+            id: String(isPlainId ? group : (group.id || group)),
+            name: isPlainId ? "" : (group.name__v || group.group_name__v || ""),
           });
         }
       }
@@ -320,16 +324,62 @@ export class VaultRestClient {
     let offset = 0;
     let hasMore = true;
 
+    // Try VQL with active__v filter first; fall back to unfiltered if field is unavailable
+    const activeFilter = await this.detectUserActiveFilter();
+
     while (hasMore) {
+      const whereClause = activeFilter ? ` WHERE ${activeFilter}` : "";
       const page = await this.executeVql(
-        `SELECT id, user_name__v, user_email__v, user_first_name__v, user_last_name__v, federated_id__v, security_policy_id__v FROM users WHERE status__v = 'active__v' LIMIT ${pageSize} OFFSET ${offset}`
+        `SELECT id, user_name__v, user_email__v, user_first_name__v, user_last_name__v, federated_id__v, security_policy_id__v FROM users${whereClause} LIMIT ${pageSize} OFFSET ${offset}`
       );
       allUsers.push(...page);
       hasMore = page.length === pageSize;
       offset += pageSize;
     }
 
+    if (allUsers.length === 0) {
+      logger.warn("VQL user query returned 0 users — falling back to REST API");
+      return this.getAllUsersViaRest();
+    }
+
     return allUsers;
+  }
+
+  /**
+   * Detect which active-user filter field is available in this Vault.
+   * Returns the WHERE clause fragment or empty string if none work.
+   */
+  private async detectUserActiveFilter(): Promise<string> {
+    for (const filter of ["active__v = true", "status__v = 'active__v'"]) {
+      const test = await this.executeVql(
+        `SELECT id FROM users WHERE ${filter} LIMIT 1`
+      );
+      if (test.length > 0) return filter;
+    }
+    // Neither filter works — query will run unfiltered
+    logger.warn("Cannot detect user active filter field — loading all users");
+    return "";
+  }
+
+  /**
+   * Fallback: load users via REST API when VQL is unavailable.
+   */
+  private async getAllUsersViaRest(): Promise<Record<string, unknown>[]> {
+    try {
+      const response = await this.authClient.executeWithRetry(
+        "getAllUsersRest",
+        (client) => client.get("/objects/users"),
+        { maxAttempts: 2 }
+      );
+
+      const users = response.data?.users || [];
+      return users
+        .map((entry: { user?: Record<string, unknown> }) => entry.user || entry)
+        .filter((u: Record<string, unknown>) => u.active__v !== false);
+    } catch (error: unknown) {
+      logger.error(`REST getAllUsers failed: ${error instanceof Error ? error.message : "unknown"}`);
+      return [];
+    }
   }
 
   /**
@@ -337,6 +387,25 @@ export class VaultRestClient {
    * Uses pagination to handle large group sets.
    */
   async getAllGroups(): Promise<Record<string, unknown>[]> {
+    // VQL on 'groups' is not supported in all Vaults — use REST API directly
+    try {
+      const response = await this.authClient.executeWithRetry(
+        "getAllGroups",
+        (client) => client.get("/objects/groups"),
+        { maxAttempts: 2 }
+      );
+
+      const groups = response.data?.groups || [];
+      return groups
+        .map((entry: { group?: Record<string, unknown> }) => entry.group || entry)
+        .filter((g: Record<string, unknown>) => g.active__v !== false);
+    } catch (error: unknown) {
+      logger.warn(
+        `REST getAllGroups failed, trying VQL fallback: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    // VQL fallback for older API versions
     const allGroups: Record<string, unknown>[] = [];
     const pageSize = 1000;
     let offset = 0;
@@ -344,8 +413,12 @@ export class VaultRestClient {
 
     while (hasMore) {
       const page = await this.executeVql(
-        `SELECT id, group_name__v, group_description__v FROM groups WHERE status__v = 'active__v' LIMIT ${pageSize} OFFSET ${offset}`
+        `SELECT id, group_name__v, group_description__v FROM groups LIMIT ${pageSize} OFFSET ${offset}`
       );
+      if (page.length === 0 && offset === 0) {
+        logger.warn("Groups VQL also returned 0 results — group cache will be empty");
+        break;
+      }
       allGroups.push(...page);
       hasMore = page.length === pageSize;
       offset += pageSize;

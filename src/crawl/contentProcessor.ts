@@ -525,10 +525,20 @@ export class ContentProcessor {
   private buildMetadataContent(record: Record<string, string>): string {
     const parts = [
       record.title__v || record.name__v || "",
+      record.document_number__v ? `Document Number: ${record.document_number__v}` : "",
       record.description__v || "",
+      record.type__v ? `Type: ${record.type__v}` : "",
+      record.subtype__v ? `Subtype: ${record.subtype__v}` : "",
+      record.status__v ? `Status: ${record.status__v}` : "",
+      record.product__v ? `Product: ${record.product__v}` : "",
+      record.country__v ? `Country: ${record.country__v}` : "",
+      record.language__v ? `Language: ${record.language__v}` : "",
       record.key_message__v || "",
+      record.claim__v ? `Claim: ${record.claim__v}` : "",
+      record.tags__v ? `Tags: ${record.tags__v}` : "",
+      record.owner__v ? `Owner: ${record.owner__v}` : "",
     ].filter(Boolean);
-    return parts.join("\n\n");
+    return parts.join("\n");
   }
 
   private extractExtension(filename: string): string {

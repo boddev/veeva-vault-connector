@@ -34,6 +34,9 @@ export interface ConnectorConfig {
   autoDiscoverObjects: boolean;
   fullCrawlDays: number[];        // 0=Sun, 6=Sat. Empty = every day
   progressBatchSize: number;      // How often to checkpoint progress (items per batch)
+  crawlTimeBudgetMs: number;      // Max ms per crawl chunk before pausing for timer resume
+  crawlConcurrency: number;       // Number of documents to process concurrently (default: 10)
+  fullCrawlFetchContent: boolean; // Whether to download document text during full crawl (default: false)
 
   // Azure
   storageConnectionString: string;
@@ -58,7 +61,7 @@ export function loadConfig(): ConnectorConfig {
   return {
     vaultApplication: appValue,
 
-    vaultDns: requireEnv("VEEVA_VAULT_DNS"),
+    vaultDns: requireEnv("VEEVA_VAULT_DNS").replace(/\/+$/, ""),
     apiVersion: process.env.VEEVA_API_VERSION || "v25.3",
     username: requireEnv("VEEVA_USERNAME"),
     password: requireEnv("SECRET_VEEVA_PASSWORD"),
@@ -74,7 +77,11 @@ export function loadConfig(): ConnectorConfig {
     crawlBatchSize,
     autoDiscoverObjects: process.env.AUTO_DISCOVER_OBJECTS !== "false",
     fullCrawlDays: parseFullCrawlDays(process.env.FULL_CRAWL_DAYS || "0,6"),
-    progressBatchSize: parsePositiveIntegerEnv("PROGRESS_BATCH_SIZE", 500),
+    progressBatchSize: parsePositiveIntegerEnv("PROGRESS_BATCH_SIZE", 50),
+    // 20 minutes processing budget per chunk — leaves 10 min for download/extract + buffer
+    crawlTimeBudgetMs: parsePositiveIntegerEnv("CRAWL_TIME_BUDGET_MS", 20 * 60 * 1000),
+    crawlConcurrency: parsePositiveIntegerEnv("CRAWL_CONCURRENCY", 10),
+    fullCrawlFetchContent: process.env.FULL_CRAWL_FETCH_CONTENT === "true",
 
     storageConnectionString: process.env.AzureWebJobsStorage || "UseDevelopmentStorage=true",
     crawlStateTable: process.env.CRAWL_STATE_TABLE || `VeevaConnectorCrawlState${capitalize(appValue)}`,

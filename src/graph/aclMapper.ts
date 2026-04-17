@@ -51,6 +51,11 @@ export class AclMapper {
   private initialized = false;
   private graphClient: Client;
 
+  // In-flight promise memoization to prevent duplicate lookups under concurrency
+  private pendingUserLookups = new Map<string, Promise<string | undefined>>();
+  private pendingGroupLookups = new Map<string, Promise<string | undefined>>();
+  private pendingExternalGroups = new Map<string, Promise<string | undefined>>();
+
   constructor(
     private readonly vaultClient: VaultRestClient,
     private readonly config: ConnectorConfig
@@ -114,6 +119,13 @@ export class AclMapper {
     logger.info(
       `ACL mapper initialized: ${this.userCache.size} users, ${this.groupCache.size} groups`
     );
+
+    if (this.userCache.size === 0) {
+      logger.error("ACL mapper WARNING: user cache is EMPTY — all documents will receive deny-all ACLs. Check Vault user query.");
+    }
+    if (this.groupCache.size === 0) {
+      logger.warn("ACL mapper: group cache is empty — group-based ACLs will use external group fallback");
+    }
   }
 
   /**
@@ -278,6 +290,24 @@ export class AclMapper {
     const cached = this.externalGroupCache.get(vaultGroupId);
     if (cached) return cached;
 
+    // Deduplicate in-flight creation
+    const pending = this.pendingExternalGroups.get(vaultGroupId);
+    if (pending) return pending;
+
+    const promise = this.doEnsureExternalGroup(vaultGroupId, groupName);
+    this.pendingExternalGroups.set(vaultGroupId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingExternalGroups.delete(vaultGroupId);
+    }
+  }
+
+  private async doEnsureExternalGroup(
+    vaultGroupId: string,
+    groupName: string
+  ): Promise<string | undefined> {
+
     const connectionId = this.config.connectorId;
     const externalGroupId = `vault_group_${vaultGroupId}`;
 
@@ -431,6 +461,22 @@ export class AclMapper {
   private async lookupUserObjectId(
     candidate: string
   ): Promise<string | undefined> {
+    // Deduplicate in-flight lookups for the same candidate
+    const pending = this.pendingUserLookups.get(candidate);
+    if (pending) return pending;
+
+    const promise = this.doLookupUser(candidate);
+    this.pendingUserLookups.set(candidate, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingUserLookups.delete(candidate);
+    }
+  }
+
+  private async doLookupUser(
+    candidate: string
+  ): Promise<string | undefined> {
     const escapedCandidate = escapeODataString(candidate);
 
     try {
@@ -457,6 +503,21 @@ export class AclMapper {
   }
 
   private async lookupGroupObjectId(
+    candidate: string
+  ): Promise<string | undefined> {
+    const pending = this.pendingGroupLookups.get(candidate);
+    if (pending) return pending;
+
+    const promise = this.doLookupGroup(candidate);
+    this.pendingGroupLookups.set(candidate, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pendingGroupLookups.delete(candidate);
+    }
+  }
+
+  private async doLookupGroup(
     candidate: string
   ): Promise<string | undefined> {
     const escapedCandidate = escapeODataString(candidate);
