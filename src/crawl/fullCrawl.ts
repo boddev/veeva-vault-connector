@@ -186,27 +186,32 @@ export class FullCrawlEngine {
         await this.reportPhase("Processing documents", itemsProcessed, totalItems);
         const fetchContent = this.config.fullCrawlFetchContent;
         const openAcl = this.config.fullCrawlOpenAcl;
-        logger.info(`Processing ${docRecords.length} documents (resume from index ${resumeIdx}, concurrency=${this.config.crawlConcurrency}, fetchContent=${fetchContent}, openAcl=${openAcl})...`);
-
         const concurrency = this.config.crawlConcurrency;
-        let nextIndex = resumeIdx;
+        logger.info(`Processing ${docRecords.length} documents (resume from index ${resumeIdx}, concurrency=${concurrency}, fetchContent=${fetchContent}, openAcl=${openAcl})...`);
 
-        while (nextIndex < docRecords.length) {
-          if (this.isTimeBudgetExceeded()) {
-            await this.pauseCrawl(itemsProcessed, PHASE_DOCS, nextIndex, errors);
-            return { itemsProcessed, itemsDeleted, errors, stopTime, paused: true };
-          }
+        // Worker pool: each worker pulls the next doc from a shared index.
+        // Eliminates batch-barrier stalls where one slow doc blocks the entire batch.
+        let nextDocIndex = resumeIdx;
+        let docItemsProcessed = 0;
+        let docErrors = 0;
+        let timeBudgetHit = false;
+        let lastReportedCount = 0;
 
-          // Take the next batch
-          const batchEnd = Math.min(nextIndex + concurrency, docRecords.length);
-          const batch = docRecords.slice(nextIndex, batchEnd);
+        const worker = async (): Promise<void> => {
+          while (!timeBudgetHit) {
+            const myIndex = nextDocIndex++;
+            if (myIndex >= docRecords.length) break;
 
-          // Process batch concurrently — all items in this batch must finish before checkpoint
-          const results = await Promise.allSettled(
-            batch.map(async (record) => {
+            if (this.isTimeBudgetExceeded()) {
+              timeBudgetHit = true;
+              break;
+            }
+
+            try {
+              const record = docRecords[myIndex];
               const items = await this.contentProcessor.processDocument(record, { fetchContent });
               const acl = openAcl
-                ? undefined // graphClient defaults to tenant-wide grant
+                ? undefined
                 : await this.aclMapper.mapDocumentAcl(
                     record.doc_id || record.id?.split("_")[0] || "",
                     false,
@@ -215,25 +220,32 @@ export class FullCrawlEngine {
               for (const item of items) {
                 await this.graphClient.upsertItem(item.itemId, item.properties, item.content, acl);
               }
-              return items.length;
-            })
-          );
+              docItemsProcessed += items.length;
+            } catch (error: unknown) {
+              docErrors++;
+              logger.warn(`Failed doc at index ${myIndex}: ${error instanceof Error ? error.message : "unknown"}`);
+            }
 
-          // Tally results — only advance past the full batch
-          for (const result of results) {
-            if (result.status === "fulfilled") {
-              itemsProcessed += result.value;
-            } else {
-              errors++;
-              logger.warn(`Failed doc in batch at index ${nextIndex}: ${result.reason instanceof Error ? result.reason.message : "unknown"}`);
+            // Periodic progress reporting
+            const totalDone = docItemsProcessed + docErrors;
+            if (totalDone - lastReportedCount >= batchSize) {
+              lastReportedCount = totalDone;
+              await this.reportPhase("Processing documents", itemsProcessed + docItemsProcessed, totalItems, nextDocIndex);
             }
           }
+        };
 
-          nextIndex = batchEnd;
-          if (nextIndex % batchSize === 0 || nextIndex >= docRecords.length) {
-            await this.reportPhase("Processing documents", itemsProcessed, totalItems, nextIndex);
-          }
+        await Promise.allSettled(Array.from({ length: concurrency }, () => worker()));
+        itemsProcessed += docItemsProcessed;
+        errors += docErrors;
+
+        if (timeBudgetHit) {
+          // Resume from the next unstarted index (in-flight items will have completed)
+          await this.pauseCrawl(itemsProcessed, PHASE_DOCS, nextDocIndex, errors);
+          return { itemsProcessed, itemsDeleted, errors, stopTime, paused: true };
         }
+
+        await this.reportPhase("Processing documents", itemsProcessed, totalItems, docRecords.length);
       }
 
       // === PHASE: Relationships ===
@@ -271,7 +283,7 @@ export class FullCrawlEngine {
         await this.reportPhase("Processing objects", itemsProcessed, totalItems);
         logger.info(`Processing ${objectTypes.length} object types (resume from ${resumeIdx})...`);
 
-        // Flatten all object records with their types for batch processing
+        // Flatten all object records with their types for worker pool processing
         const allObjRecords: Array<{ record: Record<string, string>; objectType: string }> = [];
         for (const [objectType, objRecords] of objectRecordMap) {
           for (const record of objRecords) {
@@ -281,42 +293,54 @@ export class FullCrawlEngine {
 
         const concurrency = this.config.crawlConcurrency;
         let nextObjIndex = resumeIdx;
+        let objItemsProcessed = 0;
+        let objErrors = 0;
+        let objTimeBudgetHit = false;
+        let objLastReported = 0;
 
-        while (nextObjIndex < allObjRecords.length) {
-          if (this.isTimeBudgetExceeded()) {
-            await this.pauseCrawl(itemsProcessed, PHASE_OBJECTS, nextObjIndex, errors);
-            return { itemsProcessed, itemsDeleted, errors, stopTime, paused: true };
-          }
+        const objWorker = async (): Promise<void> => {
+          while (!objTimeBudgetHit) {
+            const myIndex = nextObjIndex++;
+            if (myIndex >= allObjRecords.length) break;
 
-          const batchEnd = Math.min(nextObjIndex + concurrency, allObjRecords.length);
-          const batch = allObjRecords.slice(nextObjIndex, batchEnd);
+            if (this.isTimeBudgetExceeded()) {
+              objTimeBudgetHit = true;
+              break;
+            }
 
-          const results = await Promise.allSettled(
-            batch.map(async ({ record, objectType }) => {
+            try {
+              const { record, objectType } = allObjRecords[myIndex];
               const item = this.contentProcessor.processVaultObject(record, objectType);
               const acl = this.config.fullCrawlOpenAcl
                 ? undefined
                 : await this.aclMapper.mapObjectAcl(objectType, record.id || "");
               await this.graphClient.upsertItem(item.itemId, item.properties, item.content, acl);
-            })
-          );
-
-          for (const result of results) {
-            if (result.status === "fulfilled") {
-              itemsProcessed++;
-            } else {
-              errors++;
-              if (errors <= 10 || errors % 100 === 0) {
-                logger.warn(`Failed object in batch: ${result.reason instanceof Error ? result.reason.message : "unknown"}`);
+              objItemsProcessed++;
+            } catch (error: unknown) {
+              objErrors++;
+              if (objErrors <= 10 || objErrors % 100 === 0) {
+                logger.warn(`Failed object at index ${myIndex}: ${error instanceof Error ? error.message : "unknown"}`);
               }
             }
-          }
 
-          nextObjIndex = batchEnd;
-          if (nextObjIndex % batchSize === 0 || nextObjIndex >= allObjRecords.length) {
-            await this.reportPhase("Processing objects", itemsProcessed, totalItems);
+            const totalDone = objItemsProcessed + objErrors;
+            if (totalDone - objLastReported >= batchSize) {
+              objLastReported = totalDone;
+              await this.reportPhase("Processing objects", itemsProcessed + objItemsProcessed, totalItems);
+            }
           }
+        };
+
+        await Promise.allSettled(Array.from({ length: concurrency }, () => objWorker()));
+        itemsProcessed += objItemsProcessed;
+        errors += objErrors;
+
+        if (objTimeBudgetHit) {
+          await this.pauseCrawl(itemsProcessed, PHASE_OBJECTS, nextObjIndex, errors);
+          return { itemsProcessed, itemsDeleted, errors, stopTime, paused: true };
         }
+
+        await this.reportPhase("Processing objects", itemsProcessed, totalItems);
       }
 
       // === PHASE: Workflows ===

@@ -25,7 +25,8 @@ import { retryWithBackoff } from "../utils/retry";
 import "isomorphic-fetch";
 
 const GRAPH_SCOPES = ["https://graph.microsoft.com/.default"];
-const MAX_CONCURRENT_OPERATIONS = 8; // Best practice: 4-8 simultaneous calls (max 25)
+const MAX_CONCURRENT_OPERATIONS = 20; // Graph allows 25 per connection; leave headroom
+const DEFAULT_RATE_LIMIT_PER_SEC = 22; // Stay ~12% below the 25 items/sec Graph limit
 
 /**
  * Simple concurrency limiter to throttle simultaneous Graph API calls.
@@ -65,9 +66,72 @@ class ConcurrencyLimiter {
   }
 }
 
+/**
+ * Token-bucket rate limiter with queued waiters.
+ * Ensures Graph API calls stay at or below maxPerSec, with a small burst allowance.
+ */
+class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly waitQueue: Array<() => void> = [];
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private readonly maxPerSec: number,
+    private readonly burstSize: number = 4
+  ) {
+    this.tokens = burstSize;
+    this.lastRefill = Date.now();
+  }
+
+  async acquire(): Promise<void> {
+    this.refill();
+    if (this.tokens >= 1) {
+      this.tokens--;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+      this.scheduleRefill();
+    });
+  }
+
+  private refill(): void {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    this.tokens = Math.min(this.burstSize, this.tokens + elapsed * this.maxPerSec);
+    this.lastRefill = now;
+  }
+
+  private scheduleRefill(): void {
+    if (this.timer) return;
+    const intervalMs = Math.ceil(1000 / this.maxPerSec);
+    this.timer = setInterval(() => {
+      this.refill();
+      while (this.tokens >= 1 && this.waitQueue.length > 0) {
+        this.tokens--;
+        const next = this.waitQueue.shift()!;
+        next();
+      }
+      if (this.waitQueue.length === 0 && this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    }, intervalMs);
+  }
+
+  dispose(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+}
+
 export class GraphConnectorClient {
   private client: Client;
   private limiter = new ConcurrencyLimiter(MAX_CONCURRENT_OPERATIONS);
+  private rateLimiter = new RateLimiter(DEFAULT_RATE_LIMIT_PER_SEC);
   private readonly apiVersion: GraphApiVersion;
 
   constructor(private readonly config: ConnectorConfig) {
@@ -305,8 +369,18 @@ export class GraphConnectorClient {
 
     // Check serialized payload size before sending (4MB limit)
     const contentValue = content ? this.truncateContent(content.value) : undefined;
+
+    // Add OData type annotations for StringCollection (array) properties
+    const annotatedProps: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(properties)) {
+      annotatedProps[key] = value;
+      if (Array.isArray(value)) {
+        annotatedProps[`${key}@odata.type`] = "Collection(String)";
+      }
+    }
+
     const body: Record<string, unknown> = {
-      properties,
+      properties: annotatedProps,
       acl: (acl && acl.length > 0 ? acl : [this.getDefaultAcl()]).map(
         (entry) => ({
           type: entry.type === "externalGroup" ? "externalGroup" : entry.type,
@@ -336,18 +410,20 @@ export class GraphConnectorClient {
       };
     }
 
-    await this.limiter.run(() =>
-      retryWithBackoff(
-        () =>
+    await retryWithBackoff(
+      async () => {
+        await this.rateLimiter.acquire();
+        return this.limiter.run(() =>
           this.client
             .api(
               `/external/connections/${connectionId}/items/${sanitizedId}`
             )
             .header("Content-Type", "application/json")
-            .put(body),
-        3,
-        `upsertItem:${sanitizedId}`
-      )
+            .put(body)
+        );
+      },
+      3,
+      `upsertItem:${sanitizedId}`
     );
   }
 
@@ -360,17 +436,19 @@ export class GraphConnectorClient {
     const sanitizedId = this.sanitizeItemId(itemId);
 
     try {
-      await this.limiter.run(() =>
-        retryWithBackoff(
-          () =>
+      await retryWithBackoff(
+        async () => {
+          await this.rateLimiter.acquire();
+          return this.limiter.run(() =>
             this.client
               .api(
                 `/external/connections/${connectionId}/items/${sanitizedId}`
               )
-              .delete(),
-          3,
-          `deleteItem:${sanitizedId}`
-        )
+              .delete()
+          );
+        },
+        3,
+        `deleteItem:${sanitizedId}`
       );
     } catch (error: unknown) {
       // 404 is acceptable — item already deleted

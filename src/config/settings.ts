@@ -36,7 +36,7 @@ export interface ConnectorConfig {
   progressBatchSize: number;      // How often to checkpoint progress (items per batch)
   crawlTimeBudgetMs: number;      // Max ms per crawl chunk before pausing for timer resume
   crawlConcurrency: number;       // Number of documents to process concurrently (default: 10)
-  fullCrawlFetchContent: boolean; // Whether to download document text during full crawl (default: false)
+  fullCrawlFetchContent: boolean; // Whether to download document text during full crawl (default: true)
   fullCrawlOpenAcl: boolean;      // Use tenant-wide grant ACL instead of per-document ACLs (default: false)
 
   // Azure
@@ -81,8 +81,8 @@ export function loadConfig(): ConnectorConfig {
     progressBatchSize: parsePositiveIntegerEnv("PROGRESS_BATCH_SIZE", 50),
     // 20 minutes processing budget per chunk — leaves 10 min for download/extract + buffer
     crawlTimeBudgetMs: parsePositiveIntegerEnv("CRAWL_TIME_BUDGET_MS", 20 * 60 * 1000),
-    crawlConcurrency: parsePositiveIntegerEnv("CRAWL_CONCURRENCY", 10),
-    fullCrawlFetchContent: process.env.FULL_CRAWL_FETCH_CONTENT === "true",
+    crawlConcurrency: parsePositiveIntegerEnv("CRAWL_CONCURRENCY", 20),
+    fullCrawlFetchContent: process.env.FULL_CRAWL_FETCH_CONTENT !== "false",
     fullCrawlOpenAcl: process.env.FULL_CRAWL_OPEN_ACL === "true",
 
     storageConnectionString: process.env.AzureWebJobsStorage || "UseDevelopmentStorage=true",
