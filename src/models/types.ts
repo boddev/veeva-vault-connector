@@ -157,7 +157,7 @@ export interface CrawlState {
   lastIncrementalCrawlTime?: string;
   lastFullCrawlStopTime?: string;
   lastIncrementalStopTime?: string;
-  crawlStatus: "idle" | "running" | "failed";
+  crawlStatus: "idle" | "running" | "paused" | "failed";
   currentCrawlType?: "full" | "incremental";
   crawlStartedAt?: string;
   errorMessage?: string;
@@ -172,6 +172,10 @@ export interface CrawlState {
   estimatedCompletionAt?: string;
   fullCrawlResumeIndex?: number;
   fullCrawlDataFile?: string;
+  // Phase-level resume: which phase to resume from (0=docs,1=rels,2=objects,3=workflows,4=picklists,5=summaries)
+  fullCrawlPhase?: number;
+  fullCrawlErrors?: number;
+  lastIncrementalItemsProcessed?: number;
 }
 
 // --- ACL types ---

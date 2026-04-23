@@ -295,9 +295,10 @@ async function statusHandler(
     const services = createServices();
     await services.stateManager.initialize();
 
-    const [crawlState, connectionStatus] = await Promise.all([
+    const [crawlState, connectionStatus, itemCount] = await Promise.all([
       services.stateManager.getState(),
       services.graphClient.getConnectionStatus().catch(() => null),
+      services.graphClient.getItemCount().catch(() => 0),
     ]);
 
     // Calculate progress info when running or paused
@@ -337,6 +338,8 @@ async function statusHandler(
           lastIncrementalCrawl: crawlState.lastIncrementalStopTime || null,
           itemsProcessed: crawlState.itemsProcessed || 0,
           itemsDeleted: crawlState.itemsDeleted || 0,
+          itemCount,
+          lastIncrementalItemsProcessed: crawlState.lastIncrementalItemsProcessed || 0,
           error: crawlState.errorMessage || null,
         },
         progress,
@@ -471,7 +474,7 @@ function getInlineDashboard(): string {
     <div class="info-row"><span class="info-label">Last Full Crawl</span><span id="lastFullCrawl">Never</span></div>
     <div class="info-row"><span class="info-label">Last Incremental</span><span id="lastIncremental">Never</span></div>
     <div class="info-row"><span class="info-label">Items Indexed</span><span id="itemsIndexed">0</span></div>
-    <div class="info-row"><span class="info-label">Items Deleted</span><span id="itemsDeleted">0</span></div>
+    <div class="info-row"><span class="info-label">Last Incremental Re-indexed</span><span id="lastIncrReindexed">0</span></div>
     <div id="errorRow" class="info-row" style="display:none;"><span class="info-label">Error</span><span class="error-text" id="errorText"></span></div>
   </div>
 
@@ -598,8 +601,8 @@ async function fetchStatus() {
     // Stats
     document.getElementById('lastFullCrawl').textContent = formatDate(s.lastFullCrawl);
     document.getElementById('lastIncremental').textContent = formatDate(s.lastIncrementalCrawl);
-    document.getElementById('itemsIndexed').textContent = (s.itemsProcessed || 0).toLocaleString();
-    document.getElementById('itemsDeleted').textContent = (s.itemsDeleted || 0).toLocaleString();
+    document.getElementById('itemsIndexed').textContent = (s.itemCount || 0).toLocaleString();
+    document.getElementById('lastIncrReindexed').textContent = (s.lastIncrementalItemsProcessed || 0).toLocaleString();
     const errRow = document.getElementById('errorRow');
     if (s.error) { errRow.style.display = 'flex'; document.getElementById('errorText').textContent = s.error; }
     else { errRow.style.display = 'none'; }

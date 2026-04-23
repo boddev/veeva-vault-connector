@@ -467,6 +467,22 @@ export class GraphConnectorClient {
       .get();
   }
 
+  /**
+   * Get the total number of items indexed in the connection.
+   */
+  async getItemCount(): Promise<number> {
+    const connectionId = this.config.connectorId;
+    try {
+      const response = await this.client
+        .api(`/external/connections/${connectionId}/items/$count`)
+        .header("ConsistencyLevel", "eventual")
+        .get();
+      return typeof response === "number" ? response : parseInt(String(response), 10) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
   // --- Private helpers ---
 
   private sanitizeItemId(id: string): string {

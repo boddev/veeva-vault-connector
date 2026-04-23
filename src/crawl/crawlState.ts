@@ -159,6 +159,7 @@ export class CrawlStateManager {
       lastIncrementalStopTime: stopTime,
       itemsProcessed,
       itemsDeleted,
+      lastIncrementalItemsProcessed: itemsProcessed,
       errorMessage: undefined,
     });
   }
@@ -174,15 +175,42 @@ export class CrawlStateManager {
     });
   }
 
+  /**
+   * Mark crawl as paused — time budget exceeded, will resume on next timer tick.
+   */
+  async markCrawlPaused(checkpoint: {
+    itemsProcessed: number;
+    fullCrawlPhase: number;
+    fullCrawlResumeIndex: number;
+    fullCrawlErrors: number;
+  }): Promise<void> {
+    await this.updateState({
+      crawlStatus: "paused",
+      itemsProcessed: checkpoint.itemsProcessed,
+      fullCrawlPhase: checkpoint.fullCrawlPhase,
+      fullCrawlResumeIndex: checkpoint.fullCrawlResumeIndex,
+      fullCrawlErrors: checkpoint.fullCrawlErrors,
+      lastHeartbeat: new Date().toISOString(),
+    });
+  }
+
   private async markCrawlStart(
     crawlType: "full" | "incremental",
     updates: Partial<CrawlState>
   ): Promise<void> {
     await this.writeState((current) => {
+      // Allow resuming from "paused" state without treating it as a conflict
+      if (current.crawlStatus === "paused" && crawlType === current.currentCrawlType) {
+        logger.info(`Resuming paused ${crawlType} crawl`);
+        return {
+          ...current,
+          ...updates,
+          crawlStatus: "running",
+          errorMessage: undefined,
+        };
+      }
+
       if (current.crawlStatus === "running") {
-        // Stale-lock detection: if a crawl has been "running" for > 6 hours,
-        // it was likely killed by Azure timeout or a crash without cleanup.
-        // Break the lock so new crawls can proceed.
         const STALE_LOCK_MS = 6 * 60 * 60 * 1000; // 6 hours
         const startedAt = current.crawlStartedAt ? new Date(current.crawlStartedAt).getTime() : 0;
         const elapsed = Date.now() - startedAt;
@@ -259,6 +287,9 @@ export class CrawlStateManager {
         estimatedCompletionAt: entity.estimatedCompletionAt as string | undefined,
         fullCrawlResumeIndex: entity.fullCrawlResumeIndex as number | undefined,
         fullCrawlDataFile: entity.fullCrawlDataFile as string | undefined,
+        fullCrawlPhase: entity.fullCrawlPhase as number | undefined,
+        fullCrawlErrors: entity.fullCrawlErrors as number | undefined,
+        lastIncrementalItemsProcessed: entity.lastIncrementalItemsProcessed as number | undefined,
       };
     } catch (error: unknown) {
       if ((error as { statusCode?: number })?.statusCode === 404) {
@@ -301,6 +332,9 @@ function sanitizeState(state: CrawlState): Omit<CrawlState, "etag"> {
       estimatedCompletionAt: state.estimatedCompletionAt,
       fullCrawlResumeIndex: state.fullCrawlResumeIndex,
       fullCrawlDataFile: state.fullCrawlDataFile,
+      fullCrawlPhase: state.fullCrawlPhase,
+      fullCrawlErrors: state.fullCrawlErrors,
+      lastIncrementalItemsProcessed: state.lastIncrementalItemsProcessed,
     }).filter(([, value]) => value !== undefined)
   ) as Omit<CrawlState, "etag">;
 }
