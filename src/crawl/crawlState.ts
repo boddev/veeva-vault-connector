@@ -115,6 +115,7 @@ export class CrawlStateManager {
       lastFullCrawlStopTime: stopTime,
       itemsProcessed,
       itemsDeleted,
+      totalItemsIndexed: itemsProcessed,
       errorMessage: undefined,
     });
   }
@@ -290,6 +291,7 @@ export class CrawlStateManager {
         fullCrawlPhase: entity.fullCrawlPhase as number | undefined,
         fullCrawlErrors: entity.fullCrawlErrors as number | undefined,
         lastIncrementalItemsProcessed: entity.lastIncrementalItemsProcessed as number | undefined,
+        totalItemsIndexed: entity.totalItemsIndexed as number | undefined,
       };
     } catch (error: unknown) {
       if ((error as { statusCode?: number })?.statusCode === 404) {
@@ -335,6 +337,7 @@ function sanitizeState(state: CrawlState): Omit<CrawlState, "etag"> {
       fullCrawlPhase: state.fullCrawlPhase,
       fullCrawlErrors: state.fullCrawlErrors,
       lastIncrementalItemsProcessed: state.lastIncrementalItemsProcessed,
+      totalItemsIndexed: state.totalItemsIndexed,
     }).filter(([, value]) => value !== undefined)
   ) as Omit<CrawlState, "etag">;
 }

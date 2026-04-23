@@ -176,6 +176,7 @@ export interface CrawlState {
   fullCrawlPhase?: number;
   fullCrawlErrors?: number;
   lastIncrementalItemsProcessed?: number;
+  totalItemsIndexed?: number;
 }
 
 // --- ACL types ---

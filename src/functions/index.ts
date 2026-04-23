@@ -31,6 +31,7 @@ import { GraphConnectorClient } from "../graph/graphClient";
 import { getSchemaForApp } from "../graph/schema";
 import { AclMapper } from "../graph/aclMapper";
 import { CrawlStateManager } from "../crawl/crawlState";
+import { CrawlState } from "../models/types";
 import { FullCrawlEngine } from "../crawl/fullCrawl";
 import { IncrementalCrawlEngine } from "../crawl/incrementalCrawl";
 import { logger } from "../utils/logger";
@@ -287,6 +288,28 @@ async function crawlResumeTimerHandler(timer: Timer, context: InvocationContext)
 
 // --- 4. Status endpoint ---
 
+async function statusPatchHandler(
+  request: HttpRequest,
+  context: InvocationContext
+): Promise<HttpResponseInit> {
+  try {
+    const services = createServices();
+    await services.stateManager.initialize();
+    const body = await request.json() as Record<string, unknown>;
+    const updates: Partial<CrawlState> = {};
+    if (typeof body.totalItemsIndexed === "number") {
+      updates.totalItemsIndexed = body.totalItemsIndexed;
+    }
+    if (Object.keys(updates).length === 0) {
+      return { status: 400, jsonBody: { status: "error", message: "No valid fields to update" } };
+    }
+    await services.stateManager.updateState(updates);
+    return { status: 200, jsonBody: { status: "ok", updated: updates } };
+  } catch (error: unknown) {
+    return { status: 500, jsonBody: { status: "error", message: error instanceof Error ? error.message : "Unknown" } };
+  }
+}
+
 async function statusHandler(
   request: HttpRequest,
   context: InvocationContext
@@ -295,10 +318,9 @@ async function statusHandler(
     const services = createServices();
     await services.stateManager.initialize();
 
-    const [crawlState, connectionStatus, itemCount] = await Promise.all([
+    const [crawlState, connectionStatus] = await Promise.all([
       services.stateManager.getState(),
       services.graphClient.getConnectionStatus().catch(() => null),
-      services.graphClient.getItemCount().catch(() => 0),
     ]);
 
     // Calculate progress info when running or paused
@@ -338,7 +360,7 @@ async function statusHandler(
           lastIncrementalCrawl: crawlState.lastIncrementalStopTime || null,
           itemsProcessed: crawlState.itemsProcessed || 0,
           itemsDeleted: crawlState.itemsDeleted || 0,
-          itemCount,
+          itemCount: crawlState.totalItemsIndexed || crawlState.totalItems || 0,
           lastIncrementalItemsProcessed: crawlState.lastIncrementalItemsProcessed || 0,
           error: crawlState.errorMessage || null,
         },
@@ -670,5 +692,6 @@ app.timer("incrementalCrawlTimer", { schedule: process.env.INCREMENTAL_CRAWL_SCH
 app.timer("crawlResumeTimer", { schedule: process.env.CRAWL_RESUME_SCHEDULE || "0 */5 * * * *", handler: crawlResumeTimerHandler });
 
 app.http("status", { methods: ["GET"], authLevel: "function", handler: statusHandler });
+app.http("statusPatch", { methods: ["PATCH"], authLevel: "function", handler: statusPatchHandler });
 app.http("dashboardStatus", { methods: ["GET"], authLevel: "anonymous", route: "dashboard/status", handler: statusHandler });
 app.http("admin", { methods: ["GET"], authLevel: "anonymous", route: "dashboard", handler: adminHandler });
